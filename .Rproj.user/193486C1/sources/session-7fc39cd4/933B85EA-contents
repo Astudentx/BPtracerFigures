@@ -1,0 +1,419 @@
+---
+title: "00.RefseqDatabase"
+author: "yaozhong_zhang"
+date: "2024-08-15"
+output: html_document
+---
+
+
+# 加载分析包和病原菌数据库
+```{r}
+path <- getwd()
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = path)
+
+library(data.table)
+library(magrittr)
+library(bptracer)
+library(dplyr)
+load("01.rawdata/UniPathogenDB/UniPathogenDB.Rdata")
+```
+
+# Refseq info
+```{r}
+
+# 读取taxnonmy信息
+taxid <- read.delim(file = "01.rawdata/Refseq_240519/refseq_240519_taxid.taxonomy.txt")
+taxidsubspecies <-  read.delim(file = "/Users/astudentx/Linux/database/refseq_240519_taxonomy/refseq_240519_taxid.taxonomySubspecies.txt",check.names = F)
+speciestaxid <- read.delim(file = "01.rawdata/Refseq_240519/refseq_240519_speciestaxid.taxonomy.txt")
+speciestaxidsubspecies <-  read.delim(file = "/Users/astudentx/Linux/database/refseq_240519_taxonomy/refseq_240519_speciestaxid.taxonomySubspecies.txt",check.names = F)
+
+df1 <- read.delim(file = "/Users/astudentx/Linux/database/refseq_240519_taxonomy/refseq_240519_speciestaxid.taxonomyLineage.txt",check.names = F)
+df2 <- taxonomy_combine(inputtble  = df1,col = c("Kindom","Phylum","Class","Order","Family","Genus","Species"),newcolname = "taxonomy")
+df3 <- taxonomy_combine(inputtble  = df2,col = c("Kindom.ID","Phylum.ID","Class.ID","Order.ID","Family.ID","Genus.ID","Species.ID"),newcolname="Lineage")
+speciestaxidLineage <- taxonomy_prefix(inputtble = df3,colnames  = c("Kindom","Phylum","Class","Order","Family","Genus","Species"),action = "remove",level =c("k", "p", "c", "o", "f", "g", "s"))
+speciestaxidLineage <- data.frame(lapply(speciestaxidLineage, as.character), stringsAsFactors = FALSE)
+
+
+
+# 导入下载的所有基因组数据
+GCF_ID <- read.delim(file = "01.rawdata/Refseq_240519/refseq_ftp_downlaod.ID2.txt",header = F);colnames(GCF_ID) <- c("assembly_accession","download_ID")
+
+# 读入assembly_summary_refseq_bacteria,fread可能会丢弃空行
+refseq_raw <- read.delim(file = "01.rawdata/Refseq_240519/refseq_240519_assembly_summary.txt",sep = "\t",check.names = F,fill = T,skip = 1,quote = "\t")
+colnames(refseq_raw)[1] <- "assembly_accession"
+refseq_raw <- refseq_raw[!(refseq_raw$assembly_accession == "#assembly_accession"), ]
+refseq_raw <- left_join(refseq_raw,speciestaxidLineage,by=c("species_taxid"="species_taxid"))
+
+# 已经下载的genomes
+refseq_raw_download <- refseq_raw[which(refseq_raw$assembly_accession %in% GCF_ID$assembly_accession),] %>% unique()
+# 无法下载的genomes
+refseq_raw_nondownload <- refseq_raw[which(!refseq_raw$assembly_accession %in% GCF_ID$assembly_accession),] %>% unique()
+
+unique(refseq_raw_download$assembly_accession) %>% length()
+GCF_mutiID <- uniq_c(refseq_raw_download$assembly_accession) %>% filter(Count>1)
+
+
+# 筛选已经下载的所有GCFID，可以下载的GCF文件一共353585
+taxlist1 <- c("Kindom","Phylum","Class","Order","Family","Genus","Species")
+taxlist2 <- c("Kindom.ID","Phylum.ID","Class.ID","Order.ID","Family.ID","Genus.ID","Species.ID")
+colnames(refseq_raw_download)
+temp1 <- refseq_raw_download %>% select(assembly_accession,taxid,species_taxid,all_of(taxlist1),all_of(taxlist2))
+
+# 合并GCF_taxonomy,17个GCF无法获取GCFID信息
+temp1$Kindom[is.na(temp1$Kindom)] %>% length()
+# 对这17个物种进行标记，ID是否被NCBI所删除
+temp1$ID_Delet_by_NCBI <- "FALSE"
+temp1$ID_Delet_by_NCBI[which(is.na(temp1$kindom))] <- "TURE"
+temp1 <- arrange(temp1,ID_Delet_by_NCBI)
+# 合并获取最终的GCF_taxonomy
+temp2 <- left_join(GCF_ID,temp1)
+
+# 正好是存在多个taxID属于不同species
+uniq_c(temp2$species_taxid) %>% nrow()
+uniq_c(temp2$species) %>% nrow()
+uniq_c(temp2$ID_Delet_by_NCBI) 
+
+refseq_240519_downloadGCFtax <- temp2
+refseq_240519_downloadInfoRaw <- refseq_raw_download
+refseq_240519_allInfoRaw<-  refseq_raw
+refseq_240519_tax <- speciestaxidsubspecies
+# 输出数据
+# write.table(temp3,file = "01.rawdata/Refseq_240519/refseq_240519_GCFtaxnonmy.txt",col.names = T,row.names = F,sep = "\t",quote = F)
+```
+
+# Refseq Kraken2
+```{r}
+# 使用的所有序列
+refseq_kraken2_all <- readxl::read_xlsx(path = "01.rawdata/Refseq_kraken2/refseq_240519_forKraken2.xlsx",sheet = 1) %>% .[,1] %>% as.data.frame()
+colnames(refseq_kraken2_all)[1] <- "assembly_accession"
+nrow(refseq_kraken2_all)
+
+# 建库所使用的代表性序列
+refseq_kraken2_represent <- readxl::read_xlsx(path = "01.rawdata/Refseq_kraken2/refseq_240519_forKraken2.xlsx",sheet = 2) %>% .[,1] %>% as.data.frame()
+colnames(refseq_kraken2_represent)[1] <- "assembly_accession"
+nrow(refseq_kraken2_represent)
+
+# 所有的代表性序列都是可以被发现的物种
+refseq_kraken2_represent_GCFtax<- refseq_240519_downloadGCFtax[which(refseq_240519_downloadGCFtax$assembly_accession %in% refseq_kraken2_represent$assembly_accession),]
+# 所有物种49803，代表性物种只有18626
+refseq_240519_allInfoRaw$species_taxid %>% unique() %>% length()
+refseq_kraken2_represent_GCFtax$ID_Delet_by_NCBI %>% uniq_c()
+
+```
+
+# 代表性基因组及大肠和肺炎克雷伯筛选
+```{r}
+
+df1 <- refseq_240519_downloadInfoRaw[which(refseq_240519_downloadInfoRaw$refseq_category=="representative genome"),]
+df2 <- refseq_240519_allInfoRaw[which(refseq_240519_allInfoRaw$refseq_category=="representative genome"),]
+uniq_c(df1$organism_name)
+
+# 补充大肠杆菌和肺炎克雷伯
+attach(refseq_240519_downloadInfoRaw)
+proGenome <- readxl::read_xlsx("01.rawdata/ProGenomeSelect/ProGenomeRepresentivate.xlsx")
+proGenome_S <- refseq_240519_downloadInfoRaw[which(refseq_240519_downloadInfoRaw$biosample %in% proGenome$Biosample ),]
+# write.csv(proGenome_S,"01.rawdata/ProGenomeSelect/ProGenomeRepresentivate_Select.csv",quote = F,row.names  = F)
+proGenome_F <- proGenome[which(!proGenome$Biosample %in% refseq_240519_downloadInfoRaw$biosample ),]
+proGenome_F2 <- proGenome[which(proGenome$Biosample %in% refseq_240519_downloadInfoRaw$biosample ),]
+```
+# 构建Pangenome所使用的数据
+```{r}
+# 用于构建Pangenomes的序列名称，已经经过初步的筛选了
+GCF.use <- read.delim(file = "01.rawdata/Refseq_240519/final.GCF.used.list",header = F)
+colnames(GCF.use) <- c("assembly_accession","species_taxid")
+refseq_240519_usedGCFtax <- refseq_240519_downloadGCFtax[which(refseq_240519_downloadGCFtax$assembly_accession %in% GCF.use$assembly_accession ),]
+refseq_240519_usedInfoRaw <- refseq_240519_downloadInfoRaw[which(refseq_240519_downloadInfoRaw$assembly_accession %in% GCF.use$assembly_accession ),]
+refseq_240519_usedtax <- refseq_240519_usedGCFtax %>% select(4:18) %>% unique()
+
+dim(GCF.use)
+dim(refseq_240519_usedGCFtax)
+dim(refseq_240519_usedInfoRaw)
+dim(refseq_240519_usedtax)
+```
+
+# 附图-基因组组装情况分布
+```{r}
+# 组装情况饼图 ------------------------------------------------------------------
+Assamble_state <- uniq_c(refseq_240519_usedInfoRaw$assembly_level)
+colnames(Assamble_state)[2] <- "Freq"
+Assamble_state$percent <- round(Assamble_state$Freq/sum(Assamble_state$Freq),4)*100
+Assamble_state$state <- paste0(Assamble_state$ID," ",Assamble_state$percent,"%")
+P1 <- ggplot(Assamble_state,aes(x="",y=Freq,fill=state))+
+  geom_bar(stat="identity")+
+  coord_polar("y",start=1) +
+  scale_fill_simpsons()+
+  # geom_label_repel(color="white",data = Assamble_state,aes(label=percent),show.legend = F)+
+  # geom_text(aes(label = percent))+
+  theme_minimal()+
+  guides(fill=guide_legend(ncol=1)) +
+  theme(legend.key.size = unit(.8,'cm'))+      #设置图例文字大小
+  theme(axis.title=element_blank(),
+        axis.ticks=element_blank(),
+        axis.text = element_blank(),
+        legend.title = element_blank(),
+        # legend.position = c(.5,.03))+
+        legend.position = "bottom")+
+  theme(legend.key.size = unit(.3,'cm'))+
+  theme(panel.margin.x=unit(0.2, "lines"))+ 
+  # guides(fill=guide_legend(nrow =2))+
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(),axis.ticks.x=element_blank())
+P1
+ggsave("03.figure/S_RefseqPie.pdf",width = 3,height = 4)
+
+
+
+# Refseq组装情况统计
+# head(Refseq_tax)
+temp <- refseq_240519_usedGCFtax
+Refseq_phylum <- uniq_c(temp$Phylum)
+colnames(Refseq_phylum)[1] <- "x"
+Refseq_phylum$x <- as.character(Refseq_phylum$x)
+# Refseq_phylum$x <- factor(Refseq_phylum$x,levels =Refseq_phylum$x )
+Refseq_phylum$Freq2 <- Refseq_phylum$Freq
+Refseq_phylum$Count2 <- Refseq_phylum$Count
+Refseq_phylum_top8 <- LorMe::Top_taxa(input = Refseq_phylum,n = 9,inputformat = 2,outformat = 1 )
+Refseq_phylum_top8$Count
+
+P2 <- ggplot(data =Refseq_phylum_top8,aes(x = reorder(x,Count),y = (Count)) )+
+  geom_col(fill="#F5C045")+
+  theme_jgfbw()+
+  # theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust = 0.5))+
+  coord_flip()+                             
+  xlab("Phylum")+ylab("Counts")
+P2
+ggsave("03.figure/S_RefseqCol.pdf",width = 3,height = 3)
+
+```
+
+# 附图-泛基因去冗余数据数据
+去冗余/
+基因组数量/
+衰减率/
+
+```{r}
+
+# 导入去除冗余数据
+Pangenome_stat  <- read.delim(file = "01.rawdata/Pangenomes/ZYZ.combined.ffn.stat.txt",sep = "\t",check.names = F)
+Pangenome_stat$Type <- ifelse(
+  grepl("cdhit\\.ffn\\.stat\\.txt$", Pangenome_stat$ID), "After cd-hit",
+  ifelse(grepl("\\.ffn\\.stat\\.txt$", Pangenome_stat$ID), "Before cd-hit", NA)
+)
+Pangenome_stat$species_taxid <- str_extract(Pangenome_stat$ID, "^[0-9]+")
+colnames(Pangenome_stat)[which(colnames(Pangenome_stat)=="Total length")] <- "GeneLength"
+colnames(Pangenome_stat)[which(colnames(Pangenome_stat)=="Total number")] <- "GeneNumber"
+
+
+# 导入使用的CGFID
+GCF.use <- read.delim(file = "01.rawdata/Refseq_240519/final.GCF.used.list",header = F)
+colnames(GCF.use) <- c("assembly_accession","species_taxid")
+attach(GCF.use)
+
+Pangenome_GenomeNumber <- uniq_c(GCF.use$species_taxid)
+colnames(Pangenome_GenomeNumber)[2] <- "GenomeNumber"
+Pangenome_stat <- left_join(Pangenome_stat,Pangenome_GenomeNumber,by=c("species_taxid"="ID"))
+
+# 计算衰减率
+Pangenome_stat_1 <- Pangenome_stat %>% filter(Type=="Before cd-hit")
+Pangenome_stat_2 <- Pangenome_stat %>% filter(Type=="After cd-hit")
+
+NewName <- paste0(colnames(Pangenome_stat_2)," cdhit")
+colnames(Pangenome_stat_2) <- NewName
+uniq_c(Pangenome_stat_2$`species_taxid cdhit`)
+colnames(Pangenome_stat_2)[16] <- "species_taxid"
+
+Pangenome_stat_final <- left_join(Pangenome_stat_1,Pangenome_stat_2)
+Pangenome_stat_final$reduce_rate <- (Pangenome_stat_final$GeneLength-Pangenome_stat_final$`GeneLength cdhit`)/Pangenome_stat_final$GeneLength
+
+
+
+# pangenome state ---------------------------------------------------------
+# 泛基因集合基因组大小分布规律
+# 基因组集合去冗余衰减率
+# 泛基因集合物种们水平组成情况
+Pangenome_stat_final$GenomeNumber
+ggplot(data =Pangenome_stat_final,aes(x = GenomeNumber,y = log10(GeneLength)) )+
+  # geom_line(aes(color=variable))+
+  geom_jitter(alpha=.5,color="#005755")+
+  ggforce::facet_zoom(xlim=c(10,400),zoom.size = 3,horizontal = F)+
+  ylab("GeneTotalNum")+theme_bw()
+
+ggplot(data =Pangenome_stat_final,aes(x = GenomeNumber,y = log10(`GeneLength cdhit`)) )+
+  # geom_line(aes(color=variable))+
+  geom_jitter(alpha=.5,color="#005755")+
+  ggforce::facet_zoom(xlim=c(0,200),zoom.size = 3,horizontal = F)+
+  ylab("PanGeneNumber")+theme_bw()
+
+ggplot(data =Pangenome_stat_final,aes(x = GenomeNumber,y = reduce_rate) )+
+  # geom_line(aes(color=variable))+
+  geom_jitter(alpha=.5,color="#005755")+
+  ggforce::facet_zoom(xlim=c(0,200),zoom.size = 3)+
+  ylab("Reduce Rate")+theme_bw()
+
+
+
+
+P3 <- ggplot(data =Pangenome_stat,aes(x = GenomeNumber,y = log10(GeneLength)) )+
+  # geom_line(aes(color=variable))+
+  geom_jitter(alpha=.8,aes(color=Type),size=.4)+
+  ggforce::facet_zoom(xlim=c(0,1000),zoom.size = 3,horizontal = F)+
+  ylab("log10(Numbers of total gene)")+xlab("Number of species genomes in Refseq")+
+  theme_jgfbw()+
+  scale_color_manual(values = color_zyz1)+
+  theme(legend.title = element_blank(),
+        legend.position = c(.18,.5))+
+  theme(legend.key.size = unit(0.5, 'lines'))
+P3
+ggsave(P3,filename = "03.figure/S_PangenomePoint.pdf",height = 3,width = 3)
+
+# histogram of GeneNumber ---------------------------------------------------------------
+Pangenome_stat$GeneNumber
+P_his <- ggplot(data = Pangenome_stat_final,aes(x = log10(GeneNumber) ))+
+  # geom_density(fill="#F5C045")+
+  geom_histogram(bins = 500,fill="#F5C045")+
+  theme_jgf()+
+  xlab("log10(Pangenome Gene Number)")
+P_his
+# histogram of GeneLength ---------------------------------------------------------------
+ggplot(data = Pangenome_stat_final,aes(x = log10(GeneLength) ))+
+  geom_histogram(bins = 500,fill="#F5C045")+
+  theme_jgf()
+
+# histogram of reduce_rate ---------------------------------------------------------------
+ggplot(data = Pangenome_stat_final,aes(x = reduce_rate))+
+  geom_histogram(bins = 500,fill="#F5C045")+
+  theme_jgf()
+```
+
+# 附图-泛基因集物种分布数据构成
+泛基因集合门水平物种数量柱状图/
+泛基因集合phylum-order组成柱状图/
+泛基因集合phylum-genus组成柱状图/
+
+```{r}
+
+head(refseq_240519_usedtax)
+head(NewPA_Air)
+
+
+df1 <- refseq_240519_usedtax 
+df2 <- df1[df1$Species %in%NewPA_Air$Species, ] %>% cbind(.,pathogen="Pathogen")
+df3 <- df1[!(df1$Species %in%NewPA_Air$Species), ] %>% cbind(.,pathogen="Nonpathogen")
+df4 <- rbind(df2,df3)
+order <- uniq_c(refseq_240519_usedtax$Phylum)[,1]
+
+
+Pangenome_phylum <- df4 %>% select(Phylum,pathogen) %>% uniq_c_df()
+Pangenome_phylum_wide<-spread(Pangenome_phylum,pathogen,Count)
+Pangenome_phylum_wide[is.na(Pangenome_phylum_wide)] <- 0
+Pangenome_phylum_wide <- Pangenome_phylum_wide[order(-Pangenome_phylum_wide$Nonpathogen),]
+# 筛选top9的Phylum
+Pangenome_phylum_top   <- Pangenome_phylum_wide[c(1:8),]
+Pangenome_phylum_other <- Pangenome_phylum_wide[-c(1:8),]
+Pangenome_phylum_other2 <- data.frame(Phylum="Others",
+                                     Nonpathogen=sum(Pangenome_phylum_other$Nonpathogen),
+                                     Pathogen=sum(Pangenome_phylum_other$Pathogen),check.names = F)
+
+Pangenome_phylum_top_melt <- rbind(Pangenome_phylum_top,Pangenome_phylum_other2) %>% reshape2::melt(.)
+
+# 附图
+P4 <- ggplot(data =Pangenome_phylum_top_melt,aes(x = reorder(Phylum,value),y = value ))+
+  geom_col(aes(fill=variable))+
+  scale_fill_manual(values = rev(color_zyz2))+
+  theme_jgfbw()+
+  # geom_rect(aes(xmin="Cyanobacteria", xmax=Inf,ymin=0, ymax=300),fill='#FF3300',alpha = .005)+
+  # theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust = 0.5))+
+  theme(legend.key.size = unit(.3,'cm'))+      #设置图例文字大小
+  theme(legend.position = c(.7,.1))+
+    coord_flip()+       
+  xlab("Phylum")+ylab("Counts")
+P4
+ggsave(P4,filename = "03.figure/S_PangenomeTopCol.pdf",width = 3,height = 3)
+```
+
+# 附图-合并拼图
+```{r}
+design1 <- c("12
+              34")
+library(patchwork)
+
+final <- P1+P2+P3+P4+ 
+  plot_layout(design = design1)+ 
+  plot_annotation(tag_levels = list(c('a', 'b',"c","d")))&
+  theme(plot.title = element_text(face = "bold"),
+        plot.tag = element_text(face = "bold"))
+final
+
+final <- plot_spacer()+P2+P3+P4+ 
+  plot_layout(design = design1)+ 
+  plot_annotation(tag_levels = list(c( 'b',"c","d")))&
+  theme(plot.title = element_text(face = "bold"),
+        plot.tag = element_text(face = "bold"))
+final
+ggsave(filename = "03.figure/S_PangenomeAll.pdf",width = 6,height = 6)
+
+
+```
+
+# 统计-Pangenome前几种门类物种与基因组数量占比
+```{r}
+
+# 计算Refseq下载基因组数量统计
+attach(refseq_240519_usedGCFtax)
+cat("Refseq基因组数量：", nrow(refseq_240519_usedGCFtax), "\n")
+cat("Refseq物种数量："  , uniq_c(refseq_240519_usedGCFtax$species_taxid) %>% nrow(), "\n")
+cat("Refseq门水平数量：", uniq_c(refseq_240519_usedGCFtax$Phylum) %>% nrow(), "\n")
+cat("Refseq属水平数量：", uniq_c(refseq_240519_usedGCFtax$Genus) %>% nrow(), "\n")
+
+
+# 计算前 4个主要门类的数量占比
+refseq_data <- uniq_c(refseq_240519_usedGCFtax$Phylum)
+total_count <- sum(refseq_data$Count)
+refseq_data <- refseq_data %>%
+  mutate(Percentage = (Count / total_count) * 100) %>%
+  arrange(desc(Percentage))
+
+# 计算前4个门类的数量占比
+percentage_top4 <- sum(refseq_data$Count[1:4]) / sum(refseq_data$Count) * 100
+# 打印结果，连同文字说明
+cat("前4个门类的基因组数量占比为：", round(percentage_top4, 2), "%\n")
+
+
+refseq_data <- refseq_240519_usedGCFtax %>% select(Phylum,Species) %>% unique() 
+refseq_data <- uniq_c(refseq_data$Phylum)
+total_count <- sum(refseq_data$Count)
+refseq_data <- refseq_data %>%
+  mutate(Percentage = (Count / total_count) * 100) %>%
+  arrange(desc(Percentage))
+# 计算前4个门类的数量占比
+percentage_top4 <- sum(refseq_data$Count[1:4]) / sum(refseq_data$Count) * 100
+# 打印结果，连同文字说明
+cat("前4个门类的物种数量占比为：", round(percentage_top4, 2), "%\n")
+
+```
+
+# 数据存储
+```{r}
+save(GCF.use,
+     refseq_240519_usedGCFtax,
+     refseq_240519_usedtax,
+     refseq_240519_usedInfoRaw,
+     refseq_240519_downloadGCFtax ,
+     refseq_240519_downloadInfoRaw ,
+     refseq_240519_allInfoRaw,
+     refseq_240519_tax,
+     Pangenome_stat_final,
+     file = "02.datasave/00.RefseqDatabase.Rdata")
+
+
+save(
+     refseq_240519_usedGCFtax,
+     refseq_240519_usedtax,
+     refseq_240519_usedInfoRaw,
+     Pangenome_stat_final,
+     file = "02.datasave/00.RefseqDatabase.Rdata")
+
+
+```
+
+

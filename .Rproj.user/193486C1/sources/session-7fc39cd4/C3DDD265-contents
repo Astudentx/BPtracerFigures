@@ -1,0 +1,280 @@
+---
+title: "00.RefseqDatabase"
+author: "yaozhong_zhang"
+date: "2024-08-15"
+output: html_document
+---
+
+# Load package and database
+```{r}
+path <- getwd()
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = path)
+
+
+package <- c('readxl','magrittr','LorMe',
+             'ggtree','reshape2','ggplot2','dplyr','tidyr',
+             'readr','purrr','tibble','stringr','forcats',
+             'ggplot2','ggsci','ggridges','RColorBrewer','pheatmap',
+             'patchwork','ggpubr','zyzPackage','cowplot','ggrepel','networkD3',"bptracer")
+             
+lapply(package, function(x){library(x, character.only = T)}) 
+load("01.rawdata/UniPathogenDB/UniPathogenDB.Rdata")
+load("02.datasave/00.RefseqDatabase.Rdata")
+
+```
+
+# Supplementary figure: distribution of genome assembly status
+
+```{r}
+# Assembly status pie chart
+Assamble_state <- uniq_c(refseq_240519_usedInfoRaw$assembly_level)
+colnames(Assamble_state)[2] <- "Freq"
+Assamble_state$percent <- round(Assamble_state$Freq / sum(Assamble_state$Freq), 4) * 100
+Assamble_state$state <- paste0(Assamble_state$ID, " ", Assamble_state$percent, "%")
+
+P1 <- ggplot(Assamble_state, aes(x = "", y = Freq, fill = state)) +
+  geom_bar(stat = "identity") +
+  coord_polar("y", start = 1) +
+  scale_fill_simpsons() +
+  theme_minimal() +
+  guides(fill = guide_legend(ncol = 1)) +
+  theme(
+    legend.key.size = unit(.8, "cm"),
+    axis.title = element_blank(),
+    axis.ticks = element_blank(),
+    axis.text = element_blank(),
+    legend.title = element_blank(),
+    legend.position = "bottom"
+  ) +
+  theme(legend.key.size = unit(.3, "cm")) +
+  theme(panel.margin.x = unit(0.2, "lines")) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+
+P1
+ggsave("03.figureUP/S1_RefseqPie.pdf", width = 3, height = 4)
+
+
+# Assembly statistics for RefSeq genomes
+temp <- refseq_240519_usedGCFtax
+Refseq_phylum <- uniq_c(temp$Phylum)
+colnames(Refseq_phylum)[1] <- "x"
+Refseq_phylum$x <- as.character(Refseq_phylum$x)
+Refseq_phylum$Freq2 <- Refseq_phylum$Freq
+Refseq_phylum$Count2 <- Refseq_phylum$Count
+
+Refseq_phylum_top8 <- LorMe::Top_taxa(input = Refseq_phylum, n = 9, inputformat = 2, outformat = 1)
+Refseq_phylum_top8$Count
+
+P2 <- ggplot(data = Refseq_phylum_top8, aes(x = reorder(x, Count), y = Count)) +
+  geom_col(fill = "#F5C045") +
+  theme_jgfbw() +
+  coord_flip() +
+  xlab("Phylum") +
+  ylab("Counts")
+
+P2
+ggsave("03.figureUP/S1_RefseqCol.pdf", width = 3, height = 3)
+```
+
+# Supplementary figure: pangenome non-redundant dataset
+
+```{r}
+# Import pangenome statistics before/after cd-hit
+Pangenome_stat  <- read.delim(
+  file = "01.rawdata/Pangenomes/ZYZ.combined.ffn.stat.txt",
+  sep = "\t",
+  check.names = FALSE
+)
+
+Pangenome_stat$Type <- ifelse(
+  grepl("cdhit\\.ffn\\.stat\\.txt$", Pangenome_stat$ID), "After cd-hit",
+  ifelse(grepl("\\.ffn\\.stat\\.txt$", Pangenome_stat$ID), "Before cd-hit", NA)
+)
+
+Pangenome_stat$species_taxid <- str_extract(Pangenome_stat$ID, "^[0-9]+")
+colnames(Pangenome_stat)[which(colnames(Pangenome_stat) == "Total length")] <- "GeneLength"
+colnames(Pangenome_stat)[which(colnames(Pangenome_stat) == "Total number")] <- "GeneNumber"
+
+# Import GCF IDs used for pangenome construction
+GCF.use <- read.delim(file = "01.rawdata/Refseq_240519/final.GCF.used.list", header = FALSE)
+colnames(GCF.use) <- c("assembly_accession", "species_taxid")
+attach(GCF.use)
+
+Pangenome_GenomeNumber <- uniq_c(GCF.use$species_taxid)
+colnames(Pangenome_GenomeNumber)[2] <- "GenomeNumber"
+Pangenome_stat <- left_join(
+  Pangenome_stat,
+  Pangenome_GenomeNumber,
+  by = c("species_taxid" = "ID")
+)
+
+# Compute reduction rate after cd-hit
+Pangenome_stat_1 <- Pangenome_stat %>% filter(Type == "Before cd-hit")
+Pangenome_stat_2 <- Pangenome_stat %>% filter(Type == "After cd-hit")
+
+NewName <- paste0(colnames(Pangenome_stat_2), " cdhit")
+colnames(Pangenome_stat_2) <- NewName
+uniq_c(Pangenome_stat_2$`species_taxid cdhit`)
+colnames(Pangenome_stat_2)[16] <- "species_taxid"
+
+Pangenome_stat_final <- left_join(Pangenome_stat_1, Pangenome_stat_2)
+Pangenome_stat_final$reduce_rate <-
+  (Pangenome_stat_final$GeneLength - Pangenome_stat_final$`GeneLength cdhit`) /
+  Pangenome_stat_final$GeneLength
+
+
+# Pangenome size and reduction patterns
+Pangenome_stat_final$GenomeNumber
+
+ggplot(
+  data = Pangenome_stat_final,
+  aes(x = GenomeNumber, y = log10(GeneLength))
+) +
+  geom_jitter(alpha = .5, color = "#005755") +
+  ggforce::facet_zoom(xlim = c(10, 400), zoom.size = 3, horizontal = FALSE) +
+  ylab("GeneTotalNum") +
+  theme_bw()
+
+ggplot(
+  data = Pangenome_stat_final,
+  aes(x = GenomeNumber, y = log10(`GeneLength cdhit`))
+) +
+  geom_jitter(alpha = .5, color = "#005755") +
+  ggforce::facet_zoom(xlim = c(0, 200), zoom.size = 3, horizontal = FALSE) +
+  ylab("PanGeneNumber") +
+  theme_bw()
+
+ggplot(
+  data = Pangenome_stat_final,
+  aes(x = GenomeNumber, y = reduce_rate)
+) +
+  geom_jitter(alpha = .5, color = "#005755") +
+  ggforce::facet_zoom(xlim = c(0, 200), zoom.size = 3) +
+  ylab("Reduce Rate") +
+  theme_bw()
+
+
+P3 <- ggplot(
+  data = Pangenome_stat,
+  aes(x = GenomeNumber, y = log10(GeneLength))
+) +
+  geom_jitter(alpha = .8, aes(color = Type), size = .4) +
+  ggforce::facet_zoom(xlim = c(0, 1000), zoom.size = 3, horizontal = FALSE) +
+  ylab("log10(Numbers of total gene)") +
+  xlab("Number of species genomes in Refseq") +
+  theme_jgfbw() +
+  scale_color_manual(values = color_zyz1) +
+  theme(
+    legend.title = element_blank(),
+    legend.position = c(.18, .5),
+    legend.key.size = unit(0.5, "lines")
+  )
+
+P3
+ggsave(P3, filename = "03.figureUP/S1_PangenomePoint.pdf", height = 3, width = 3)
+
+# Histogram of pangenome gene number
+Pangenome_stat$GeneNumber
+
+P_his <- ggplot(
+  data = Pangenome_stat_final,
+  aes(x = log10(GeneNumber))
+) +
+  geom_histogram(bins = 500, fill = "#F5C045") +
+  theme_jgf() +
+  xlab("log10(Pangenome Gene Number)")
+
+P_his
+
+# Histogram of total gene length
+ggplot(
+  data = Pangenome_stat_final,
+  aes(x = log10(GeneLength))
+) +
+  geom_histogram(bins = 500, fill = "#F5C045") +
+  theme_jgf()
+
+# Histogram of reduction rate
+ggplot(
+  data = Pangenome_stat_final,
+  aes(x = reduce_rate)
+) +
+  geom_histogram(bins = 500, fill = "#F5C045") +
+  theme_jgf()
+```
+
+# Supplementary figure: taxonomic composition of pangenome species set
+
+```{r}
+head(refseq_240519_usedtax)
+head(NewPA_Air)
+
+df1 <- refseq_240519_usedtax
+df2 <- df1[df1$Species %in% NewPA_Air$Species, ] %>% cbind(., pathogen = "Pathogen")
+df3 <- df1[!(df1$Species %in% NewPA_Air$Species), ] %>% cbind(., pathogen = "Nonpathogen")
+df4 <- rbind(df2, df3)
+order <- uniq_c(refseq_240519_usedtax$Phylum)[, 1]
+
+Pangenome_phylum <- df4 %>% select(Phylum, pathogen) %>% uniq_c_df()
+Pangenome_phylum_wide <- spread(Pangenome_phylum, pathogen, Count)
+Pangenome_phylum_wide[is.na(Pangenome_phylum_wide)] <- 0
+Pangenome_phylum_wide <- Pangenome_phylum_wide[order(-Pangenome_phylum_wide$Nonpathogen), ]
+
+# Select top 8 phyla and collapse others
+Pangenome_phylum_top   <- Pangenome_phylum_wide[c(1:8), ]
+Pangenome_phylum_other <- Pangenome_phylum_wide[-c(1:8), ]
+Pangenome_phylum_other2 <- data.frame(
+  Phylum      = "Others",
+  Nonpathogen = sum(Pangenome_phylum_other$Nonpathogen),
+  Pathogen    = sum(Pangenome_phylum_other$Pathogen),
+  check.names = FALSE
+)
+
+Pangenome_phylum_top_melt <-
+  rbind(Pangenome_phylum_top, Pangenome_phylum_other2) %>%
+  reshape2::melt()
+
+P4 <- ggplot(
+  data = Pangenome_phylum_top_melt,
+  aes(x = reorder(Phylum, value), y = value)
+) +
+  geom_col(aes(fill = variable)) +
+  scale_fill_manual(values = rev(color_zyz2)) +
+  theme_jgfbw() +
+  theme(legend.key.size = unit(.3, "cm")) +
+  theme(legend.position = c(.7, .1)) +
+  coord_flip() +
+  xlab("Phylum") +
+  ylab("Counts")
+
+P4
+ggsave(P4, filename = "03.figureUP/S1_PangenomeTopCol.pdf", width = 3, height = 3)
+```
+
+# Supplementary figure: combined multipanel layout
+
+```{r}
+design1 <- c("12
+              34")
+library(patchwork)
+
+final <- P1 + P2 + P3 + P4 +
+  plot_layout(design = design1) +
+  plot_annotation(tag_levels = list(c("a", "b", "c", "d"))) &
+  theme(
+    plot.title = element_text(face = "bold"),
+    plot.tag   = element_text(face = "bold")
+  )
+
+final
+ggsave(filename = "03.figureUP/S1_PangenomeAll.pdf", width = 6, height = 6)
+```
+
+
+
+

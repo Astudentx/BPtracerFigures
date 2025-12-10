@@ -1,0 +1,14 @@
+# R 和 RStudio
+00.libs/*.Rmd
+00.libs/*.R
+!00.libs/*UP.Rmd
+00.libs.bak
+01.rawdata
+02.datasave
+03.figure
+04.table
+05.mainfigure
+.DS_Store
+.Rhistory
+.RData
+.Rproj.user
