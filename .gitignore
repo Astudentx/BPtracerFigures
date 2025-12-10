@@ -21,3 +21,4 @@
 !03.figureUP/
 # 允许保留的整理版脚本
 !00.libs/*UP.Rmd
+gitadd.sh
