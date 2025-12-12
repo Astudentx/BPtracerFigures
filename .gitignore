@@ -23,5 +23,5 @@
 !00.libs/*UP.Rmd
 !00.libs/*UP.R
 !01.rawdata/UniPathogenDB/UniPathogenDB.Rdata
-!01.rawdata/BP2_BK/99.Setting
+!01.rawdata/BP2_BK/99.Setting/
 gitadd.sh
