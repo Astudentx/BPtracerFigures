@@ -13,7 +13,7 @@
 00.libs/*.R
 00.libs/*.sh
 00.libs.bak/
-01.rawdata/
+01.rawdata/*
 02.datasave/
 03.figure/
 04.table/
@@ -22,6 +22,12 @@
 # 允许保留的整理版脚本
 !00.libs/*UP.Rmd
 !00.libs/*UP.R
+!01.rawdata/UniPathogenDB/
+01.rawdata/UniPathogenDB/*
 !01.rawdata/UniPathogenDB/UniPathogenDB.Rdata
+!01.rawdata/BP2_BK/
+01.rawdata/BP2_BK/*
 !01.rawdata/BP2_BK/99.Setting/
+!01.rawdata/BP2_BK/99.Setting/**
+01.rawdata/BP2_BK/99.Setting/**/.DS_Store
 gitadd.sh

@@ -1,0 +1,144 @@
+
+######################LorMe模拟宏基因组数据设置
+[Main]
+# maximum number of processes
+# 模拟线程设置 默认是8 添加线程加速
+max_processors=80
+
+# 0: community design + read simulator,
+# 1: read simulator only
+# 是否设置群落参数，默认设置！
+phase=0
+
+# ouput directory, where the output will be stored (will be overwritten if set in from_profile)
+# 输出文件夹！
+output_directory=/mnt/sdc/zhangyz/project/01.meta-genome/CAMI_data/rawdata/CAMI_zyz2/T3/out
+
+# temporary directory
+# 临时文件夹
+temp_directory=/mnt/sdc/zhangyz/project/01.meta-genome/CAMI_data/rawdata/CAMI_zyz2/T3/tmp
+
+# gold standard assembly
+# 黄金组装文件！是否需要
+gsa=True
+
+# gold standard for all samples combined
+# 所有样品的黄金标准
+pooled_gsa=True
+
+# anonymize sequences?
+# 序列是否匿名
+anonymous=True
+
+# compress data (levels 0-9, recommended is 1 the gain of higher levels is not too high)
+# 是否压缩数据！默认即可，生成fq.gz文件
+compress=1
+
+# id of dataset, used in foldernames and is prefix in anonymous sequences
+# 数据集的前缀 默认是RL
+dataset_id=RL
+
+# Read Simulation settings, relevant also for from_profile
+[ReadSimulator]
+# which readsimulator to use:
+#           Choice of 'art', 'wgsim', 'nanosim', 'pbsim'
+type=art
+
+# Samtools (http://www.htslib.org/) takes care of sam/bam files. Version 1.0 or higher required!
+# file path to executable
+samtools=/mnt/sdc/zhangyz/software/CAMISIM-master/tools/samtools-1.3/samtools
+
+# file path to read simulation executable
+readsim=/mnt/sdc/zhangyz/software/CAMISIM-master/tools/art_illumina-2.3.6/art_illumina
+
+#error profiles:
+#for ART:
+#HiSeq 150bp: hi150
+#MBARC-26 150bp: mbarc
+#custom profile (see below): own
+#for wgsim:
+#error rate as <float> (e.g. 0.05 for 5% error rate)
+#blank for nanosim and wgsim
+profile=mbarc
+
+# Directory containing error profiles (can be blank for wgsim)
+error_profiles=/mnt/sdc/zhangyz/software/CAMISIM-master/tools/art_illumina-2.3.6/profiles/
+
+# For supplying custom error profiles with "own" option:
+# path to error profile files (without "[1/2].txt")
+base_profile_name=
+# read length for custom error profile
+profile_read_length=
+
+#paired end read, insert size (not applicable for nanosim)
+# 成对双端插入尺寸
+fragments_size_mean=270
+fragment_size_standard_deviation=27
+
+# Only relevant if not from_profile is run:
+[CommunityDesign]
+# specify the samples size in Giga base pairs
+size=5
+
+# how many different samples?
+# 设置重复个数
+number_of_samples=15
+
+# how many communities
+num_communities=1
+
+# directory containing the taxdump of ncbi, version from 22.02.2017 is shipped
+# "nodes.dmp"
+# "merged.dmp"
+# "names.dmp"
+# NCBI 的taxdump文件！默认是2017年22.02的
+ncbi_taxdump=/mnt/sdc/zhangyz/software/CAMISIM-master/tools/ncbi-taxonomy_20211001.tar.gz
+
+# the strain simulator for de novo strain creation
+# 从头生成strain
+strain_simulation_template=scripts/StrainSimulationWrapper/sgEvolver/simulation_dir/
+
+# define communities: [community<integer>]
+[community0]
+# information about all included genomes:
+# can be used for multiple samples
+metadata=/mnt/sdc/zhangyz/project/01.meta-genome/CAMI_data/rawdata/CAMI_zyz2/T3/seting/T3_metadata.tsv
+id_to_genome_file=/mnt/sdc/zhangyz/project/01.meta-genome/CAMI_data/rawdata/CAMI_zyz2/T3/seting/T3_genome_to_id.tsv
+
+# how many genomes do you want to sample over all?
+# 总共想选取多少个参考基因组|参考基因组个数
+genomes_total=1200
+num_real_genomes=1200
+
+# how many genomes per species taxon
+#   (species taxon will be replaced by OTU-cluster later on)
+max_strains_per_otu=1
+ratio=1
+
+# which kind of different samples do you need?
+#   replicates / timeseries_lognormal / timeseries_normal / differential
+# 那种类型的不同样品！推荐timeseries_normal 有待考虑和斟酌
+mode=replicates
+
+# Part: community design
+# Set parameters of log-normal and normal distribution, number of samples
+# sigma > 0; influences shape (higher sigma -> smaller peak and longer tail),
+log_sigma=2
+
+# mu (real number) is a parameter for the log-scale
+log_mu=1
+
+# do you want to see a distribution before you decide to use it? yes/no
+view=no
+
+# second community
+#[community1]
+#metadata=defaults/plasmid_metadata_v2.3_filtered.tsv
+#id_to_genome_file=defaults/plasmid_path.tsv
+#genomes_total=20
+#max_strains_per_otu=3
+#ratio=2.5
+#mode=differential
+#log_mu=1
+#log_sigma=2
+#view=false
