@@ -11,17 +11,19 @@ path <- getwd()
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = path)
 
-
-package <- c('readxl','magrittr','LorMe',
-             'ggtree','reshape2','ggplot2','dplyr','tidyr',
-             'readr','purrr','tibble','stringr','forcats',
-             'ggplot2','ggsci','ggridges','RColorBrewer','pheatmap',
-             'patchwork','ggpubr','zyzPackage','cowplot','ggrepel','networkD3',"bptracer")
-             
-lapply(package, function(x){library(x, character.only = T)}) 
+package <- c("readxl", "magrittr", "LorMe",
+             "ggtree", "reshape2", "ggplot2", "dplyr", "tidyr",
+             "readr", "purrr", "tibble", "stringr", "forcats",
+             "ggsci", "ggridges", "RColorBrewer", "pheatmap",
+             "patchwork", "ggpubr", "zyzPackage", "cowplot", "ggrepel", "networkD3", "bptracer")
+lapply(package, function(x) {
+  if (!requireNamespace(x, quietly = TRUE)) {
+    stop(paste("Package not installed:", x))
+  }
+  library(x, character.only = TRUE)
+})
 load("01.rawdata/UniPathogenDB/UniPathogenDB.Rdata")
 load("02.datasave/00.RefseqDatabase.Rdata")
-
 ```
 
 # Supplementary figure: distribution of genome assembly status
@@ -84,7 +86,7 @@ ggsave("03.figureUP/S1_RefseqCol.pdf", width = 3, height = 3)
 # Supplementary figure: pangenome non-redundant dataset
 
 ```{r}
-# Import pangenome statistics before/after cd-hit
+# Import pangenome statistics before and after cd-hit
 Pangenome_stat  <- read.delim(
   file = "01.rawdata/Pangenomes/ZYZ.combined.ffn.stat.txt",
   sep = "\t",
@@ -178,7 +180,7 @@ P3 <- ggplot(
 P3
 ggsave(P3, filename = "03.figureUP/S1_PangenomePoint.pdf", height = 3, width = 3)
 
-# Histogram of pangenome gene number
+# Histograms for pangenome metrics
 Pangenome_stat$GeneNumber
 
 P_his <- ggplot(
@@ -191,7 +193,7 @@ P_his <- ggplot(
 
 P_his
 
-# Histogram of total gene length
+# Histogram of reduction rate
 ggplot(
   data = Pangenome_stat_final,
   aes(x = log10(GeneLength))
@@ -199,7 +201,6 @@ ggplot(
   geom_histogram(bins = 500, fill = "#F5C045") +
   theme_jgf()
 
-# Histogram of reduction rate
 ggplot(
   data = Pangenome_stat_final,
   aes(x = reduce_rate)
@@ -272,9 +273,8 @@ final <- P1 + P2 + P3 + P4 +
   )
 
 final
-ggsave(filename = "03.figureUP/S1_PangenomeAll.pdf", width = 6, height = 6)
+ggsave(filename = "03.figureUP/S1_PangenomeAll.pdf", width = 6, height = 7)
 ```
-
 
 
 

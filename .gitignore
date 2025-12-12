@@ -21,4 +21,6 @@
 !03.figureUP/
 # 允许保留的整理版脚本
 !00.libs/*UP.Rmd
+!00.libs/*UP.R
+!01.rawdata/UniPathogenDB/UniPathogenDB.Rdata
 gitadd.sh
