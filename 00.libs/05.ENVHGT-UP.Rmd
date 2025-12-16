@@ -1,0 +1,235 @@
+---
+title: "5.ENV_HGT"
+author: "yaozhong_zhang"
+date: "2023-03-14"
+output: html_document
+---
+# Load - Package
+```{r}
+path <- getwd()
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = path)
+package <- c('readxl','magrittr','LorMe','randomForest',
+             'ggtree','reshape2','ggplot2','dplyr','tidyr',
+             'readr','purrr','tibble','stringr','forcats',
+             'ggplot2','ggsci','ggridges','RColorBrewer','pheatmap',
+             'patchwork','ggpubr','zyzPackage','cowplot','ggrepel','networkD3',"ggalluvial")
+             
+lapply(package, function(x){library(x, character.only = T)}) 
+load(file = "01.rawdata/UniPathogenDB/UniPathogenDB.Rdata")
+load(file = "02.datasave/05.ENVHGT_P.Rdata")
+```
+
+# Load - Group file
+```{r}
+group_env <- read_xlsx("01.rawdata/BP2_Env/Group/Group_env_new_V2_sel.xlsx")
+group_env$Group <- factor(group_env$Group,levels = c("Human faeces","Cow rumen","Rhizosphere","Lake","Ocean","Compost","Effluents"))
+```
+
+# Analysis - HGT threshold filtering
+```{r}
+attach(group_env)
+attach(HGT_Env)
+
+{
+  contig_length <- 1000
+  min_max_score <- 0.80
+  ave_max_score <- 0.9
+}
+
+
+# Outputs:
+# 1) HGT_Env_fil: filter HGT events by contig_length/min_max_score/ave_max_score
+# 2) HGT_Env_fil_stat: per-sample HGT counts/frequency
+# 3) HGT_Env_fil_pa: pathogen-involved HGT events
+# 4) HGT_Env_fil_pa_stat: per-sample pathogen HGT counts/frequency
+# 5) HGT_Env_fil_pa_dir: directional pathogen HGT events
+# 6) HGT_Env_fil_pa_dir_stat: per-sample directional pathogen HGT counts/frequency
+
+HGT_Env_fil <- HGT_Env %>% filter(HGT_Env$CONTIG_LENGTH>contig_length,HGT_Env$MIN_MAX_SCORE>min_max_score)
+HGT_Env_fil$CLADE_A_New <- stringr::str_sub(HGT_Env_fil$CLADE_A,start = 4)
+HGT_Env_fil$CLADE_A_New <- stringr::str_replace(HGT_Env_fil$CLADE_A_New,pattern = "_"," ")
+HGT_Env_fil$CLADE_B_New <- stringr::str_sub(HGT_Env_fil$CLADE_B,start = 4)
+HGT_Env_fil$CLADE_B_New <- stringr::str_replace(HGT_Env_fil$CLADE_B_New,pattern = "_"," ")
+HGT_Env_fil$Pathogens_Flag <- ifelse(HGT_Env_fil$CLADE_A_New %in% NewPA_Air$Species | HGT_Env_fil$CLADE_B_New %in% NewPA_Air$Species , TRUE, FALSE)
+HGT_Env_fil_stat <- uniq_c_df(HGT_Env_fil[,1:2],count = T) %>% left_join(.,contig.data,by = "sampleID")
+HGT_Env_fil_stat <- HGT_Env_fil_stat %>%  select(-Count, Count)
+HGT_Env_fil_stat$frequency <- HGT_Env_fil_stat$Count/HGT_Env_fil_stat$`Total length`*1000
+
+
+# Pathogen HGT events in CLADE_A/CLADE_B
+HGT_Env_fil_pa <- HGT_Env_fil %>% filter(Pathogens_Flag=="TRUE")
+HGT_Env_fil_pa_stat <- uniq_c_df(HGT_Env_fil_pa[,1:2],count = T) %>% left_join(.,contig.data,by = "sampleID")
+HGT_Env_fil_pa_stat <- HGT_Env_fil_pa_stat %>%  select(-Count, Count)
+# Add complete contig info to avoid NA when a sample has no HGT
+HGT_Env_fil_pa_stat <- left_join(HGT_Env_fil_stat[,c(1:15)],HGT_Env_fil_pa_stat[,c(1,16)])
+HGT_Env_fil_pa_stat$Count[is.na(HGT_Env_fil_pa_stat$Count)] <- 0
+HGT_Env_fil_pa_stat <- left_join(group_env,HGT_Env_fil_pa_stat) 
+HGT_Env_fil_pa_stat$frequency <- HGT_Env_fil_pa_stat$Count/HGT_Env_fil_pa_stat$`Total length`*1000
+
+
+# Directional pathogen HGT
+attach(HGT_Env_fil_pa)
+HGT_Env_fil_pa_dir <- HGT_Env_fil_pa[grepl(">", HGT_Env_fil_pa$DIRECTION), ]
+HGT_Env_fil_pa_dir1 <- HGT_Env_fil_pa_dir[which(HGT_Env_fil_pa_dir$CLADE_B_New %in% NewPA_Air$Species ),]
+HGT_Env_fil_pa_dir2 <- HGT_Env_fil_pa_dir[which(HGT_Env_fil_pa_dir$CLADE_A_New %in% NewPA_Air$Species ),]
+HGT_Env_fil_pa_dir <- rbind(HGT_Env_fil_pa_dir1,HGT_Env_fil_pa_dir2) %>% unique()
+HGT_Env_fil_pa_dir_stat <- uniq_c_df(HGT_Env_fil_pa_dir[,1:2],count = T)%>% left_join(.,contig.data,by = "sampleID")
+HGT_Env_fil_pa_dir_stat <- HGT_Env_fil_pa_dir_stat %>%  select(-Count, Count)
+# Add complete contig info to avoid NA when a sample has no directional HGT
+HGT_Env_fil_pa_dir_stat <- left_join(HGT_Env_fil_stat[,c(1:15)],HGT_Env_fil_pa_dir_stat[,c(1,16)])
+HGT_Env_fil_pa_dir_stat$Count[is.na(HGT_Env_fil_pa_dir_stat$Count)] <- 0
+HGT_Env_fil_pa_dir_stat <- left_join(group_env,HGT_Env_fil_pa_dir_stat) 
+HGT_Env_fil_pa_dir_stat$frequency <- HGT_Env_fil_pa_dir_stat$Count/HGT_Env_fil_pa_dir_stat$`Total length`*1000
+```
+
+
+# Analysis - convert to sankey input
+```{r}
+attach(HGT_Env_fil)
+attach(NewPA_Pro)
+
+temp <- HGT_Env_fil %>% select(Group,TAXONOMY_A,TAXONOMY_B,SYNTENY,DIRECTION)
+taxonomy_all <-  c("Kingdom", "Domain", "Phylum", "Class", "Order", "Family","Genus", "Species")
+taxonomy_all2 <-  c("Kingdom2", "Domain2", "Phylum2", "Class2", "Order2", "Family2","Genus2", "Species2")
+
+temp1 <- tidyr::separate(temp, col = "TAXONOMY_A", into = taxonomy_all, sep = "\\|", remove = F, convert = FALSE, extra = "warn", fill = "warn")
+temp2 <- tidyr::separate(temp1, col = "TAXONOMY_B", into = taxonomy_all2, sep = "\\|", remove = F, convert = FALSE, extra = "warn", fill = "warn")
+temp2 <- as.data.frame(temp2)
+
+temp2 <- bptracer::taxonomy_prefix(inputtble = temp2,colnames = c("Phylum","Phylum2"),level = c("p","p"),action = "remove")
+temp2 <- bptracer::taxonomy_prefix(inputtble = temp2,colnames = c("Species","Species2"),level = c("s","s"),action = "remove")
+
+# Inspect pathogen HGT events
+temp2$Species <- stringr::str_replace(temp2$Species,pattern = "_"," ")
+temp2$Species2 <- stringr::str_replace(temp2$Species2,pattern = "_"," ")
+temp2$Group2 <- temp2$Group
+
+temp2 <- temp2 %>%
+  left_join(NewPA_Air %>% select(Species, Type), 
+            by = c("Species" = "Species"))
+
+temp2 <- temp2 %>%
+  left_join(NewPA_Air %>% select(Species, Type), 
+            by = c("Species2" = "Species"))
+
+temp2$Type.x[is.na(temp2$Type.x)] <- "NonPathogens"
+temp2$Type.y[is.na(temp2$Type.y)] <- "NonPathogens"
+
+sankeydf_raw <- temp2
+sankeydf <- temp2 %>% select(Group,Phylum,Type.x,Phylum2,Type.y,Group2)
+sankeydf_top <- profile_top_col(sankeydf,n = 3,measure.vars = "Phylum",replaceName = "Others")
+sankeydf_top <- profile_top_col(sankeydf,n = 3,measure.vars = "Phylum2",replaceName = "Others")
+head(sankeydf)
+
+# sankey1 <- plot_sankey_analyisis(inputtable = sankeydf,measure.vars = c("Group","Phylum","Type.x","Phylum2","Type.y","Group2"),visualization = T)
+# plot_sankey_visualization(prefix = "AllGene",Links = sankey1$sankey_linklist,sankey1$sankey_nodelist,color = color_scheme_bp("color_zyz6")[5:8],path = "03.figure/Sankey/",height = 350,width = 500)
+```
+
+# Main figure - pathogen HGT cases
+```{r}
+attach(sankeydf_raw)
+sankeydf_raw_dir <- sankeydf_raw %>% filter(DIRECTION=="B>A")
+uniq_c(sankeydf_raw_dir$Type.x)
+# temp <- sankeydf_raw %>% select(Group,Genus,Genus2) %>% uniq_c() %>% filter(ID %in% "Compost")
+sankeydf_CowRumen <- sankeydf_raw_dir %>% filter(Group %in% "Cow rumen")
+# df1 <- sankeydf_CowRumen %>% filter(Genus %in% c("g__Xylanibacter","g__Prevotella") )
+
+# Pathogen events with defined direction
+df1 <- sankeydf_CowRumen
+df1 <- sankeydf_raw_dir
+df1_sel <- df1[!is.na(df1$Species),]
+df1_sel <- df1_sel %>% filter(Type.x %in% c("Animal","Zoonotic","Plant"))
+df1_sel <- df1_sel %>% filter(Type.y %in% c("Animal","Zoonotic","Plant"))
+
+df1_sel2 <- df1_sel[!is.na(df1_sel$Species2),]
+df1_sel2 <- bptracer::profile_top_col(inputtable = df1_sel2,n = 5,measure.vars = "Species")
+df1_sel2 <- bptracer::profile_top_col(inputtable = df1_sel2,n = 5,measure.vars = "Species2")
+
+
+
+sankeydf_Compost <- sankeydf_raw %>% filter(Group %in% "Compost")
+df2 <- sankeydf_Compost %>% filter(Genus %in% c("g__Enterococcus","g__Pseudomonas") | Genus2 %in% c("g__Enterococcus","g__Pseudomonas")  )
+
+sankeydf_Rhizosphere <- sankeydf_raw %>% filter(Group %in% "Rhizosphere")
+df3 <- sankeydf_Rhizosphere %>% filter(Genus %in% c("g__Ralstonia")| Genus2 %in% c("g__Ralstonia") )
+
+
+sankeydf_Effluents<- sankeydf_raw %>% filter(Group %in% "Effluents")
+df4 <- sankeydf_Effluents %>% filter(Genus %in% c("g__Arcobacter","g__Aliarcobacter") | Genus2 %in% c("g__Arcobacter","g__Aliarcobacter")  )
+
+
+sankeydf_HumanFaeces <- sankeydf_raw %>% filter(Group %in% "Human faeces")
+df5 <- sankeydf_HumanFaeces %>% filter(Genus %in% c("g__Faecalibacterium","g__Campylobacter") | Genus2 %in% c("g__Faecalibacterium","g__Campylobacter")  )
+
+
+ggplot(df1_sel2,
+       aes(axis1 = paste(Genus2), 
+           axis2 = paste(Species2), 
+           axis3 = paste(Species),
+           axis4 = paste(Genus), 
+           y = 1)) +
+  geom_alluvium(aes(fill = Species2)) +
+  geom_stratum() +
+  geom_text(stat = "stratum", aes(label = after_stat(stratum)), size = 3) +
+  scale_x_discrete(limits = c("Phylum","Source", "Target","Phylum")) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  labs(title = "Sankey Diagram: Phylum and Type Flow",
+       x = "Flow Direction",
+       y = "Count")
+
+df1_sel <- df1_sel %>% filter(Group!="Lake")
+ggplot(df1_sel,
+       aes(axis1 = paste(Phylum2), 
+           axis2 = paste(Species2), 
+           axis3 = paste(Species),
+           axis4 = paste(Phylum), 
+           y = 1)) +
+  facet_wrap(~ Group,scales = "free_y") +
+  geom_alluvium(aes(fill = Species2)) +
+  scale_y_continuous(labels = scales::number_format(accuracy = 1))+
+  geom_stratum() +
+  geom_text(stat = "stratum", aes(label = after_stat(stratum)), size = 3) +
+  scale_x_discrete(limits = c("Phylum","Source", "Target","Phylum2")) +
+  theme_minimal() +
+  theme(
+    # axis.text.y = element_text(margin = margin(r = 4)), # Reduce space between y-axis and numbers
+    strip.text = element_text(face = "bold"), # Bold facet labels
+    legend.position = "none"  # Remove legend
+  ) +
+  labs(
+    x = "",
+    y = ""
+  )
+ggsave(filename = "03.figureUP/M5_ENV_HGT.pdf",width = 14,height = 6.5)
+df1_sel %>% select(Group,Species,Species2,Type.x,Type.y)
+
+
+```
+
+
+# Output - save data
+```{r}
+save(HGT_Env_fil,
+     HGT_Env_fil_stat, 
+     HGT_Env_fil,
+     HGT_Env_fil_pa_stat, 
+     HGT_Env_fil_pa_dir,
+     HGT_Env_fil_pa_dir_stat, 
+     file = "02.datasave/05.ENVHGT.Rdata")
+```
+
+<!-- # Output - save visualization data -->
+<!-- ```{r} -->
+
+<!-- save(contig.data, -->
+<!--      HGT_Env_fil, -->
+<!--      HGT_Env_fil_stat,  -->
+<!--      HGT_Env_fil, -->
+<!--      HGT_Env_fil_pa_stat,  -->
+<!--      HGT_Env_fil_pa_dir, -->
+<!--      HGT_Env_fil_pa_dir_stat,  -->
+<!--      file = "02.datasave/05.ENVHGT_P.Rdata") -->
+
+<!-- ``` -->

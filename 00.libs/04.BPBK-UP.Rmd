@@ -20,259 +20,22 @@ package <- c('readxl','magrittr','LorMe','randomForest',
 lapply(package, function(x){library(x, character.only = T)})
 ```
 
-# 读入-模拟宏基因组group文件与真实丰度
+# 读入-分析数据库
 ```{r}
-# 读入分组文件
-Group_TA <- read_xlsx("01.rawdata/BP2_BK/99.Setting/SimulatedGenomes/BP-Tracer_si_group.xlsx") %>% as.data.frame()
-Group_TA$SpeciesNumbers <- as.factor(Group_TA$SpeciesNumbers )
-
-# 真是值读入-物种真实丰度
-# 数据列表
-# {
-#   files <- list.files(
-#     path = "01.rawdata/BP2_BK/99.Setting/distributions",  # 注意路径结尾不要带 T*/
-#     pattern = "\\.txt$",  # 正则表达式，匹配 .txt 结尾的文件
-#     all.files = TRUE,     # 包括隐藏文件
-#     full.names = TRUE,    # 返回完整路径
-#     recursive = TRUE      # 递归查找子目录
-#   )
-#   
-#   # 构建临时的丰度矩阵
-#   path <- files[1]
-#   temp <- read.delim(file = path,header = F)
-#   TrueVale <- data.frame(ID=temp$V1,stringsAsFactors = F)
-#   
-#   # 批量读入数据
-#   for (i in 1:length(files)) {
-#     df1 <- read.delim(file = files[i],header = F)
-#     sampleID <- gsub(".*/(T\\d+)/.*?(\\d+)\\.txt$", "\\1-\\2", files[i])
-#     colnames(df1) <- c("ID",sampleID)
-#     TrueVale <- left_join(TrueVale,df1,by=c("ID"))
-# }
-# 
-# BacTvalue <- left_join(TrueVale,refseq_sim_1200[,c(1,41:42)],by=c("ID"="GCFID"))
-#   
-# }
-# write.table("01.rawdata/BP2_BK/98.TrueValue/TprofileTax.txt",col.names = T,row.names = F,sep = "\t",quote = F)
-
-BacTvalue <- read.delim(file = "01.rawdata/BP2_BK/98.TrueValue/TprofileTax.txt",check.names = F)
+load(file = "01.rawdata/UniPathogenDB/UniPathogenDB.Rdata")
+load(file = "02.datasave/04.BPBK_P.Rdata")
 ```
 
 
-# 读入-模拟宏基因组物种信息
+# 读入-真实值预测值
 ```{r}
-# load("04.table/4.BP_1create.Rdata")
-# write.table(refseq_Species_1200,file = "01.rawdata/BP2_BK/99.Setting/SimulatedGenomes/refseq_Species_1200.txt",sep = "\t",row.names = F,quote = F)
-refseq_Species_1200 <- read.delim(file = "01.rawdata/BP2_BK/99.Setting/SimulatedGenomes/refseq_Species_1200.txt")
-Tax240519 <- read.delim(file = "01.rawdata/BP2_BK/98.TrueValue/taxonkit/refseq_240515_speciestaxid.taxonomyLineage.txt")
-Tax240519 <- bptracer::taxonomy_combine(Tax240519,newcolname = "Taxonomy",colnames = c(2:8))
-Tax240519 <- bptracer::taxonomy_combine(Tax240519,newcolname = "Lineage",colnames = c(9:15),sep = "|")
-Tax240519 <- bptracer::taxonomy_prefix(Tax240519,colnames = c(2:8),level = c("k", "p", "c", "o", "f", "g", "s"),action = "remove")
-Tax240519 <- unique(Tax240519)
-
-# 数量全部匹配，一共是667个模拟物种
-temp1 <- unique(refseq_Species_1200$species_taxid) ; print(length(temp1))
-temp2 <- unique(Tax240519$species_taxid) ; print(length(temp2))
-intersect(refseq_Species_1200$species_taxid,Tax240519$species_taxid) %>% length()
-
-# 替换原始的Taxonomy，生成最终版本的基因组信息表
-refseq_sim_1200 <- refseq_Species_1200 %>% .[,1:26]
-refseq_sim_1200 <- left_join(refseq_sim_1200,Tax240519,by = join_by(species_taxid))
-colnames(refseq_Species_1200)
-refseq_sim_1200$SpeciesTaxnonmy <- refseq_sim_1200$Species
-refseq_sim_1200$SpeciesID <- stringr::str_replace(string = refseq_sim_1200$Species,pattern = " ", replacement = "-")
-attach(refseq_sim_1200)
-```
+attach(ARGsTvalue)
+attach(ARGsBP)
+attach(ARGsContigs)
+attach(ARGsReads)
 
 
-
-# 读入-BK-MAGs
-```{r}
-# MAG_checkm过滤
-MAG_checkm <- read.delim("01.rawdata/BP2_BK/01.PredictedValue/05.MAGs/Bin.checkm.summary.xls",check.names = F)
-MAG_checkm <- MAG_checkm %>%
-  mutate(
-    Quality = case_when(
-      Contamination < 5 & Completeness > 90 ~ "High-quality genome",
-      Contamination < 10 & Completeness > 50 ~ "Medium-quality genome",
-      TRUE ~ "Low-quality genome"
-    ),
-    `Bin Id` = str_replace(`Bin Id`, pattern = "\\.", replacement = "\\.Bin")
-  )
-colnames(MAG_checkm)[1] <- "MAG_ID"
-
-# 中等质量基因组筛选：污染度 < 10%，完整性 > 50% --- 选用这个参数
-# MAG_checkm_filter <- MAG_checkm %>% filter(Contamination<10 & Completeness>50)
-# 高质量基因组筛选：污染度 < 5%，完整性 > 90% 
-MAG_checkm_filter <- MAG_checkm %>% filter(Contamination<5 & Completeness>90)
-
-
-# MAG_ARG注释结果过滤---------------------------
-ide <- 90
-cov <- 70
-# 老版本基于BP1数据库继续注释的
-# MAG_m8_raw <- read.delim("01.rawdata/BP2_BK/01.PredictedValue/05.MAGs/AnnnBak/FianlARG.MAG.stat.cov.xls",check.names = F)
-# MAG_m8_filter <- MAG_m8_raw %>% filter(`identify(%)`>ide & `coverage(%)`>cov)
-# 老版本的m8文件
-# MAG_m8_raw2 <- read.delim("01.rawdata/BP2_BK/01.PredictedValue/05.MAGs/Final.ARGs.out.i70c70.xls",check.names = F)
-# 最终版本-读入MAGs注释文件--基于SARGs数据库比对分析获取
-MAG_m8_raw2 <- read.delim("01.rawdata/BP2_BK/01.PredictedValue/05.MAGs/Final.AllARGs.out.i90c90.i80c80.HMM.xls",check.names = F)
-colnames(MAG_m8_raw2)[1:2] <- c("Bins","queryID")
-MAG_m8_filter <- MAG_m8_raw2 %>% filter(`Identity%` >ide & `Coverage%`>cov)
-MAG_m8_filter$MAG_ID <- stringr::str_extract(string = MAG_m8_filter$queryID,pattern = "[^_]+(?=\\|)")
-MAG_m8_filter$Group <- stringr::str_extract(string = MAG_m8_filter$queryID,pattern = "[^_]+(?=\\.)")
-MAG_m8_filter2 <- MAG_m8_filter[which(MAG_m8_filter$MAG_ID %in% MAG_checkm_filter$MAG_ID),]
-
-
-# MAG物种注释结果读入
-attach(refseq_sim_1200)
-MAG_tax <- read.delim("01.rawdata/BP2_BK/01.PredictedValue/05.MAGs/gtdbtk.tax.summary.xls")
-MAG_tax$fastani_ref %>% unique()
-colnames(MAG_tax)[1] <- "MAG_ID"
-MAG_tax$MAG_ID <- str_remove(string = MAG_tax$MAG_ID,pattern = "MAGs.")
-
-
-Refseq_tax <- refseq_sim_1200
-Refseq_tax$GCFID_2 <- stringr::str_extract(Refseq_tax$GCFID,pattern = "[^.]+(?=\\.)")
-MAG_tax$fastani_ref_2 <- stringr::str_extract(MAG_tax$fastani_ref,pattern = "[^.]+(?=\\.)")
-
-# 首先筛选GCF/GCA ID和refseq_sim_1200完全一样的物种
-MAG_tax_sel<- MAG_tax[which(MAG_tax$fastani_ref_2 %in% Refseq_tax$GCFID_2  ),]
-MAG_tax_na <-MAG_tax[which(!MAG_tax$fastani_ref_2 %in% Refseq_tax$GCFID_2  ),]
-cat("MAGs的Taxonomy与refseq_sim_1200完全一样的物种有：", nrow(MAG_tax_sel))
-cat("MAGs的Taxonomy与refseq_sim_1200不一样的物种有：", nrow(MAG_tax_na))
-
-
-# 首先去匹配完全一样的Taxonomy，基于NCBI分类学 --------
-MAG_tax_sel2 <- left_join(MAG_tax_sel,Refseq_tax,by=c("fastani_ref_2"="GCFID_2")) %>% dplyr::select(MAG_ID:fastani_ref,c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species"))
-colnames_mag <- colnames(MAG_tax_sel2)
-
-# 接着处理不一样的Taxonomy，基于自身GTDB-TK分类学 --------
-# 标准化分类学地位
-MAG_tax_na <- tidyr::separate(MAG_tax_na, classification, c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species"), sep = ";", remove = F, convert = FALSE, extra = "warn", fill = "warn")
-MAG_tax_na$Kingdom  = gsub("d__","",MAG_tax_na$Kingdom,perl=TRUE) 
-MAG_tax_na$Phylum  = gsub("p__","",MAG_tax_na$Phylum, perl=TRUE)
-MAG_tax_na$Class   = gsub("c__","",MAG_tax_na$Class,  perl=TRUE)
-MAG_tax_na$Order   = gsub("o__","",MAG_tax_na$Order,  perl=TRUE)
-MAG_tax_na$Family  = gsub("f__","",MAG_tax_na$Family, perl=TRUE)
-MAG_tax_na$Genus   = gsub("g__","",MAG_tax_na$Genus,  perl=TRUE)
-MAG_tax_na$Species = gsub("s__","",MAG_tax_na$Species,perl=TRUE)
-MAG_tax_na$Species <- stringr::str_replace(string = MAG_tax_na$Species,pattern = "_.*",replacement = "")
-MAG_tax_na <- MAG_tax_na %>% dplyr::select(all_of(colnames_mag))
-
-# 合并分类学地位 --------
-MAG_tax_final <- rbind(MAG_tax_sel2,MAG_tax_na)
-
-MAG_m8_filter_final <- left_join(MAG_m8_filter2,MAG_tax_final)
-MAG_host <- MAG_m8_filter_final %>% dplyr::select(MAG_ID:Species) %>% unique()
-colnames(MAG_host)[2] <- "ID"
-MAG_host <- left_join(MAG_host,Group_TA)
-MAG_host$Group2 <- str_sub(string = MAG_host$ID,start = 2,end = 2 )
-GTDB_ref <- uniq_c(MAG_host$fastani_ref)
-uniq_c(MAG_host$Species)
-```
-
-# BK-MAGs-Tax修正
-```{r}
-# 读入GTDB-tk数据方便后期存储
-# r207 <- read.delim("01.rawdata/BP2_BK/97.MAGsStat/r207/bac120_metadata_r207.tsv")
-# save(r207,file = "02.datasave/bac120_metadata_r207.Rdata")
-load(file = "02.datasave/bac120_metadata_r207.Rdata")
-attach(r207)
-
-r207$ID <- r207$gtdb_genome_representative
-r207 <- r207 %>% select(ID,everything())
-r207$gtdb_representative
-r207$ID <- stringr::str_remove(string = r207$ID ,pattern = "RS_")
-r207$ID <- stringr::str_remove(string = r207$ID ,pattern = "GB_")
-r207_sel <- r207[which(r207$ID %in% GTDB_ref$ID),] %>% unique() %>% filter(gtdb_representative=="t")
-r207_sel <- r207_sel %>% select(ID,ncbi_species_taxid,ncbi_taxonomy) %>% unique()
-r207_sel_ID <- r207_sel$ncbi_species_taxid %>% as.data.frame()
-# write.table(r206_sel_ID,file = "01.rawdata/BP2_BK/01.PredictedValue/05.MAGs/r207/r207_sel_ID.txt",append = F,quote = F,sep = "\t",row.names = F,col.names = F)
-
-r207_240519 <- read.delim(file = "01.rawdata/BP2_BK/97.MAGsStat//r207/r207_refseq_240519_taxid.taxonomyLineage.txt")
-r207_240519 <- bptracer::taxonomy_combine(inputtble = r207_240519,newcolname = "Taxonomy",colnames = 2:8)
-r207_240519 <- bptracer::taxonomy_combine(inputtble = r207_240519,newcolname = "Lineage",colnames = 9:15)
-r207_240519 <- r207_240519 %>% select(taxid,Taxonomy,Lineage)
-r207_final <- left_join(r207_sel[,1:2],r207_240519,by=c("ncbi_species_taxid"="taxid"))
-
-attach(MAG_host)
-df1 <- MAG_host %>% select(MAG_ID,ID,fastani_ref);colnames(df1)[2] <- "Samples"
-df2 <- left_join(df1,r207_final,by = c("fastani_ref"="ID"))
-df3 <- df2 %>% select(Samples,ncbi_species_taxid,Taxonomy,Lineage) %>% uniq_c_df()
-
-
-
-MAG_abundance <- df3 %>%
-  # mutate(TaxonomyLineage = paste(Taxonomy, Lineage, sep = "\t")) %>%  # 合并 Taxonomy 和 Lineage
-  select(Samples, ncbi_species_taxid, Count, Taxonomy, Lineage) %>%
-  pivot_wider(
-    names_from = Samples,
-    values_from = Count,
-    values_fill = 0
-  ) %>%
-  rename(SpeciesID = ncbi_species_taxid) %>%
-  relocate(Taxonomy,Lineage, .after = last_col()) %>% as.data.frame()
-# 查看结果
-head(MAG_abundance)
-write.table(MAG_abundance,file = "01.rawdata/BP2_BK/01.PredictedValue/05.MAGs/MAGs.ARGs.i90c90.i80c80.HMM.Lineage.count.txt",row.names = F,col.names = T,append = F,quote = F,sep = "\t")
-# write.table(MAG_abundance,file = "01.rawdata/BP2_BK/01.PredictedValue/05.MAGs/MAGs.ARGs.i90.l70.e1e10.Lineage.count.txt",row.names = F,col.names = T,append = F,quote = F,sep = "\t")
-# write.table(MAG_abundance,file = "01.rawdata/BP2_BK/04.FinalBK/04.MAGs/MAGsAbu.txt",row.names = F,col.names = T,append = F,quote = F,sep = "\t")
-
-```
-
-# BK-MAGs-Tax矫正补充
-```{r}
-attach(r207)
-attach(MAG_tax_na)
-MAG_tax_final <- rbind(MAG_tax_sel2,MAG_tax_na)
-
-uniq_c(MAG_tax_na$fastani_ref)
-
-
-r207$ID[r207$ID %in%  MAG_tax_na$fastani_ref] %>% length()
-
-
-r207$ID <- r207$gtdb_genome_representative
-r207 <- r207 %>% select(ID,everything())
-r207$gtdb_representative
-r207$ID <- stringr::str_remove(string = r207$ID ,pattern = "RS_")
-r207$ID <- stringr::str_remove(string = r207$ID ,pattern = "GB_")
-r207_sel <- r207[which(r207$ID %in% MAG_tax_na$fastani_ref),] %>% unique() %>% filter(gtdb_representative=="t")
-r207_sel <- r207_sel %>% select(ID,ncbi_species_taxid,ncbi_taxonomy) %>% unique()
-r207_sel_ID <- r207_sel$ncbi_species_taxid %>% as.data.frame()
-# write.table(r207_sel_ID,file = "01.rawdata/BP2_BK/97.MAGsStat/r207/r207_sel_ID2.txt",append = F,quote = F,sep = "\t",row.names = F,col.names = F)
-# 读入NCBI矫正后的Taxonomy
-r207_240519 <- read.delim(file = "01.rawdata/BP2_BK/97.MAGsStat/r207/r207_refseq_240519_taxid.taxonomyLineage2.txt")
-r207_240519 <- bptracer::taxonomy_combine(inputtble = r207_240519,newcolname = "Taxonomy",colnames = 2:8)
-r207_240519 <- bptracer::taxonomy_combine(inputtble = r207_240519,newcolname = "Lineage",colnames = 9:15)
-r207_240519 <- r207_240519 %>% select(taxid,Taxonomy,Lineage)
-r207_final <- left_join(r207_sel[,1:2],r207_240519,by=c("ncbi_species_taxid"="taxid"))
-
-
-MAG_tax_na2 <- left_join(MAG_tax_na[,c(1,3)],r207_final,by=c("fastani_ref"="ID"))
-MAG_tax_na2 <- bptracer::taxonomy_split(MAG_tax_na2,colname = "Taxonomy",level = c("k","p","c","o","f","g","s"))
-MAG_tax_na2 <- bptracer::taxonomy_prefix(MAG_tax_na2,colnames = c(5:11),action = "remove",level = c("k","p","c","o","f","g","s"))
-MAG_tax_na2 <- MAG_tax_na2 %>% select(MAG_ID,Taxonomy,fastani_ref,Kingdom:Species)
-
-colnames(MAG_tax_sel2)[2] <- "Taxonomy"
-MAG_tax_sel2$Taxonomy <- stringr::str_replace(string = MAG_tax_sel2$Taxonomy ,pattern = "d_",replacement = "k_")
-
-MAG_tax_final <- rbind(MAG_tax_sel2,MAG_tax_na2)
-MAG_tax_final <- left_join(MAG_checkm,MAG_tax_final)
-MAG_tax_final <- MAG_tax_final %>% filter(Quality=="High-quality genome")
-```
-
-
-# 预测值读入-基因预测丰度
-```{r}
-ARGsTvalue <- read.delim(file = "01.rawdata/BP2_BK/98.TrueValue/Tvalue_AllARGs.i90c90hmmanno.txt",check.names = F)
-ARGsBP <- read.delim(file = "01.rawdata/BP2_BK/01.PredictedValue/02.BP2/BK/ARGs.i95.l25.e1e6_i90c90_hmmanno.f4_0.001.f5_0.f1_0.f6_0",check.names = F)
-ARGsContigs <- read.delim(file = "01.rawdata/BP2_BK/01.PredictedValue/04.Contig/BK/ARGs.i95.l25.e1e6_i90c90_hmmanno.f4_0.001.f5_0.f1_0.f6_0",check.names = F)
-ARGsReads <- read.delim(file = "01.rawdata/BP2_BK/01.PredictedValue/03.Reads//BK/ARGs.i95.l25.e1e6_i90c90_hmmanno.f4_0.001.f5_0.f1_0.f6_0",check.names = F)
-
-
-df1 <- BacTvalue %>% select(ID,everything(),-Taxonomy,Lineage)
+df1 <- BacTvalue %>% dplyr::select(ID,everything(),-Taxonomy,Lineage)
 
 #' 生成各分类层级的丰度表
 #' 生成各分类层级的丰度表，将NA归类为unKnown
@@ -345,18 +108,20 @@ matrix_combine <- function(df1,df2,name1,name2){
   df2 <- df2; df2 <- bptracer::profile_sweep(df2)
   
   colnames(df1)[1] <- "ID";colnames(df2)[1] <- "ID"
-  df1_melt <- rownames_zyz(df1,transform = T) %>% rownames_zyz(.,transform = F,cbindrowname = T) %>% melt(.,1)
-  df2_melt <- rownames_zyz(df2,transform = T) %>% rownames_zyz(.,transform = F,cbindrowname = T) %>% melt(.,1)
+  df1_melt <- rownames_zyz(df1,transform = T) %>% rownames_zyz(.,transform = F,cbindrowname = T) %>% reshape2::melt(.,1)
+  df2_melt <- rownames_zyz(df2,transform = T) %>% rownames_zyz(.,transform = F,cbindrowname = T) %>% reshape2::melt(.,1)
   df12_melt <- full_join(df1_melt,df2_melt, by = c("ID", "variable"))
   colnames(df12_melt) <- c("ID","variable",name1,name2)
   df12_melt[is.na(df12_melt)] <- 0
   return(df12_melt)
 }
+```
 
+
+# 主图-真实值预测值相关性分析
+```{r}
 # 模拟宏基因组物种分类表，以及病原菌数据库，确定病原菌数据的
 attach(refseq_sim_1200)
-load("01.rawdata/UniPathogenDB/UniPathogenDB.Rdata")
-
 CorARGsBP1 <- matrix_combine(df1 =ARGsBPList$Species,df2 =ARGsList$Species,name1 = "Pvalue",name2 = "Tvalue")
 CorARGsBP2 <- matrix_combine(df1 =ARGsBPList$Species,df2 =BacList$Species ,name1 = "Pvalue",name2 = "Tvalue")
 
@@ -523,7 +288,7 @@ P_CorARGsReads2 <- make_CorPlot(
 # 或者六个图一起
 P_CorARGsBP1 + P_CorARGsReads1 + P_CorARGsContigs1+
 P_CorARGsBP2 + P_CorARGsReads2 + P_CorARGsContigs2 + plot_layout(guides = 'collect')
-ggsave("03.figure/S_ARG_PA_cor.pdf",width = 9,height = 5)
+ggsave("03.figureUP/S_ARG_PA_cor.pdf",width = 9,height = 5)
 
 ####################
 
@@ -651,428 +416,21 @@ P_CorARGs<- ggplot(P_CorARGsAll,aes(x = Tvalue,y = Pvalue ,color=Method))+
   # xlab("SARG Type ppm")+ylab("TAVMM ARG Type ppm")
   theme_jgf()
 P_CorARGs2/P_CorARGs
-ggsave(filename = "03.figure/M_BK3.pdf",height = 6,width = 4.4)
+ggsave(filename = "03.figureUP/M4_BK_Cor.pdf",height = 6,width = 4.4)
 
 ```
 
 
-<!-- # Gene测试值--GeneAnno -->
-<!-- ```{r} -->
-<!-- # 读入功能基因数据 -->
-
-<!-- # 获取数据路径 -->
-<!-- filePWD <- list.files("01.rawdata/BP2_BK.bak/genome_anno",pattern = "stat.cov.xls",full.names = T) -->
-<!-- filePWD[1] # ARGs -->
-<!-- # [1] "01.rawdata/BP2_BK.bak/genome_anno/FianlARG.stat.cov.xls" -->
-<!-- # 设置阈值 -->
-<!-- ide <- 90 -->
-<!-- cov <- 70 -->
-<!-- genome_ARG <- read.delim(filePWD[1], sep = "\t", stringsAsFactors = FALSE,check.names = F) -->
-
-<!-- # genome_Gene_tax;genome_Gene_GCF;genome_Gene_Species -->
-<!-- # 注释表物种封堵青枯，GCF每个携带的功能基因数量,每个物种携带的功能基因的情况 -->
-<!-- genome_ARG_filter <- genome_ARG %>% filter(`identify(%)`>ide) %>% filter(`coverage(%)` >cov) -->
-<!-- genome_ARG_filter$GCFID <- str_remove(genome_ARG_filter$queryID, "__.*$") -->
-<!-- # 因为当时模拟了3个宏基因组数据，所以可以通过inner_join取交集 -->
-<!-- genome_ARG_tax <- inner_join(genome_ARG_filter,refseq_sim_1200,by = "GCFID") -->
-<!-- genome_ARG_GCF <- uniq_c(genome_ARG_tax$GCFID);genome_ARG_GCF$DB="ARG" -->
-<!-- genome_ARG_Species <- uniq_c(genome_ARG_tax$Species);genome_ARG_Species$DB="ARG" -->
-
-
-<!-- # 批量处理数据 -->
-<!-- library(dplyr) -->
-<!-- library(stringr) -->
-
-<!-- # 通用读取基因表函数 -->
-<!-- read_gene_table <- function(gene_type, ide = 90, cov = 70, -->
-<!--                             anno_dir = "01.rawdata/BP2_BK.bak/genome_anno") { -->
-
-<!--   # 找到对应文件 -->
-<!--   file_path <- list.files(anno_dir, -->
-<!--                           pattern = paste0(gene_type, ".*stat.cov.xls$"), -->
-<!--                           full.names = TRUE) -->
-
-<!--   if (length(file_path) == 0) { -->
-<!--     stop(paste("找不到", gene_type, "对应的文件")) -->
-<!--   } -->
-
-<!--   # 读取数据 -->
-<!--   genome_data <- read.delim(file_path, sep = "\t", stringsAsFactors = FALSE,check.names = F) -->
-<!--   # 过滤 -->
-<!--   genome_filter <- genome_data %>% -->
-<!--     filter(`identify(%)` > ide, `coverage(%)` > cov) -->
-<!--   # 提取 GCF ID -->
-<!--   genome_filter$GCFID <- str_remove(genome_filter$queryID, "__.*$") -->
-<!--   # 匹配物种（如果有 refseq 数据） -->
-<!--   genome_tax <- inner_join(genome_filter, refseq_sim_1200, by = "GCFID") -->
-<!--   # 统计每个 GCF 携带功能基因的数量 -->
-<!--   genome_GCF <- uniq_c(genome_tax$GCFID) -->
-<!--   genome_GCF$DB <- gene_type -->
-<!--   # 统计每个物种携带功能基因的数量 -->
-<!--   genome_Species <- uniq_c(genome_tax$Species) -->
-<!--   genome_Species$DB <- gene_type -->
-<!--   list(GCF = genome_GCF, -->
-<!--        Species = genome_Species, -->
-<!--        raw = genome_tax) -->
-<!-- } -->
-
-<!-- # ==== 批量读取 ==== -->
-<!-- gene_types <- c("ARG", "MGE", "MRG", "VF") -->
-<!-- AnnoARG <- read_gene_table(gene_type = "ARG",ide = 90,cov = 70,anno_dir = "01.rawdata/BP2_BK.bak/genome_anno") -->
-<!-- genome_ARG_GCF <- AnnoARG$GCF -->
-<!-- genome_ARG_Species <- AnnoARG$Species -->
-<!-- genome_ARG_raw <- AnnoARG$raw -->
-
-<!-- # 五种功能基因批量处理 -->
-<!-- gene_results <- lapply(gene_types, read_gene_table) -->
-<!-- genome_ARG_GCF <- gene_results[[1]]$GCF -->
-<!-- genome_ARG_Species <- gene_results[[1]]$Species -->
-<!-- genome_ARG_raw <- gene_results[[1]]$raw -->
-
-<!-- genome_MGE_GCF <- gene_results[[2]]$GCF -->
-<!-- genome_MGE_Species <- gene_results[[2]]$Species -->
-<!-- genome_MGE_raw <- gene_results[[2]]$raw -->
-
-<!-- genome_MRG_GCF <- gene_results[[3]]$GCF -->
-<!-- genome_MRG_Species <- gene_results[[3]]$Species -->
-<!-- genome_MRG_raw <- gene_results[[3]]$raw -->
-
-<!-- genome_VF_GCF <- gene_results[[4]]$GCF -->
-<!-- genome_VF_Species <- gene_results[[4]]$Species -->
-<!-- genome_VF_raw <- gene_results[[4]]$raw -->
-
-
-
-<!-- # 定义函数 -->
-<!-- get_ARG_abundance <- function(BacTvalue, genome_Gene_GCF) { -->
-<!--   BacTvalue %>% -->
-<!--     left_join(genome_Gene_GCF, by = "ID") %>% -->
-<!--     mutate(Count = ifelse(is.na(Count), 0, Count)) %>% -->
-<!--     { -->
-<!--       abundance_cols <- setdiff(colnames(.), -->
-<!--                                 c("ID", "Taxonomy", "Lineage", "DB", "Count")) -->
-<!--       mutate(., across(all_of(abundance_cols), ~ .x * Count)) -->
-<!--     } %>% -->
-<!--     select(-Count, -DB) -->
-<!-- } -->
-
-<!-- # 使用示例 -->
-<!-- Tvalue_ARG <- get_ARG_abundance(BacTvalue = BacTvalue , genome_Gene_GCF = genome_ARG_GCF) -->
-<!-- Tvalue_MGE <- get_ARG_abundance(BacTvalue = BacTvalue , genome_Gene_GCF = genome_MGE_GCF) -->
-<!-- Tvalue_MRG <- get_ARG_abundance(BacTvalue = BacTvalue , genome_Gene_GCF = genome_MRG_GCF) -->
-<!-- Tvalue_VF  <- get_ARG_abundance(BacTvalue = BacTvalue , genome_Gene_GCF = genome_VF_GCF) -->
-
-<!-- # 真实值输出 -->
-<!-- write.table(Tvalue_ARG,file = "01.rawdata/BP2_BK/98.TrueValue/Oldvalue_ARG.txt",row.names = F,quote = F,sep = "\t") -->
-<!-- write.table(Tvalue_MGE,file = "01.rawdata/BP2_BK/98.TrueValue/Oldvalue_MGE.txt",row.names = F,quote = F,sep = "\t") -->
-<!-- write.table(Tvalue_MRG,file = "01.rawdata/BP2_BK/98.TrueValue/Oldvalue_MRG.txt",row.names = F,quote = F,sep = "\t") -->
-<!-- write.table(Tvalue_VF ,file = "01.rawdata/BP2_BK/98.TrueValue/Oldvalue_VF.txt",row.names = F,quote = F,sep = "\t") -->
-<!-- ``` -->
-
-
-<!-- # Gene真实值--GeneAnno -->
-<!-- ```{r} -->
-<!-- # 读入功能基因数据 -->
-
-<!-- # 获取数据路径 -->
-<!-- filePWD <- list.files("01.rawdata/BP2_BK.bak/genome_anno",pattern = "stat.cov.xls",full.names = T) -->
-<!-- filePWD <- list.files("01.rawdata/BP2_BK/01.PredictedValue/01.GenomeAnno/",pattern = ".xls",full.names = T) -->
-
-<!-- filePWD[1] # ARGs -->
-<!-- # [1] "01.rawdata/BP2_BK.bak/genome_anno/FianlARG.stat.cov.xls" -->
-<!-- # 设置阈值 -->
-<!-- ide <- 50 -->
-<!-- cov <- 50 -->
-<!-- genome_ARG <- read.delim(filePWD[1], sep = "\t", stringsAsFactors = FALSE,check.names = F) -->
-<!-- colnames(genome_ARG)[1] <- "queryID" -->
-<!-- head(genome_ARG) -->
-
-<!-- uniq_c(genome_ARG$queryID) -->
-<!-- # genome_Gene_tax;genome_Gene_GCF;genome_Gene_Species -->
-<!-- # 注释表物种封堵青枯，GCF每个携带的功能基因数量,每个物种携带的功能基因的情况 -->
-<!-- genome_ARG_filter <- genome_ARG %>% filter(`Identity%`>ide) %>% filter(`Coverage%` >cov) -->
-<!-- genome_ARG_filter$GCFID <- str_remove(genome_ARG_filter$queryID, "__.*$") -->
-<!-- # 因为当时模拟了3个宏基因组数据，所以可以通过inner_join取交集 -->
-<!-- genome_ARG_tax <- inner_join(genome_ARG_filter,refseq_sim_1200,by = "GCFID") -->
-<!-- genome_ARG_GCF <- uniq_c(genome_ARG_tax$GCFID);genome_ARG_GCF$DB="ARG" -->
-<!-- genome_ARG_Species <- uniq_c(genome_ARG_tax$Species);genome_ARG_Species$DB="ARG" -->
-
-
-<!-- # 批量处理数据 -->
-<!-- library(dplyr) -->
-<!-- library(stringr) -->
-
-<!-- # 通用读取基因表函数 -->
-<!-- read_gene_table <- function(gene_type, ide = 50, cov = 50, -->
-<!--                             anno_dir = "01.rawdata/BP2_BK/01.PredictedValue/01.GenomeAnno/") { -->
-
-<!--   # 找到对应文件 -->
-<!--   file_path <- list.files(anno_dir, -->
-<!--                           pattern = paste0(gene_type, ".*stat.cov.xls$"), -->
-<!--                           full.names = TRUE) -->
-
-<!--   if (length(file_path) == 0) { -->
-<!--     stop(paste("找不到", gene_type, "对应的文件")) -->
-<!--   } -->
-
-<!--   # 读取数据 -->
-<!--   genome_data <- read.delim(file_path, sep = "\t", stringsAsFactors = FALSE,check.names = F) -->
-<!--   colnames(genome_data)[1] <- "queryID" -->
-
-<!--   # 过滤 -->
-<!--   genome_filter <- genome_data %>% -->
-<!--     filter(`Identity%` > ide, `Coverage%` > cov) -->
-<!--   # 提取 GCF ID -->
-<!--   genome_filter$GCFID <- str_remove(genome_filter$queryID, "__.*$") -->
-<!--   # 匹配物种（如果有 refseq 数据） -->
-<!--   genome_tax <- inner_join(genome_filter, refseq_sim_1200, by = "GCFID") -->
-<!--   # 统计每个 GCF 携带功能基因的数量 -->
-<!--   genome_GCF <- uniq_c(genome_tax$GCFID) -->
-<!--   genome_GCF$DB <- gene_type -->
-<!--   # 统计每个物种携带功能基因的数量 -->
-<!--   genome_Species <- uniq_c(genome_tax$Species) -->
-<!--   genome_Species$DB <- gene_type -->
-<!--   list(GCF = genome_GCF, -->
-<!--        Species = genome_Species, -->
-<!--        raw = genome_tax) -->
-<!-- } -->
-
-<!-- # ==== 批量读取 ==== -->
-<!-- gene_types <- c("ARG", "MGE", "MRG", "VF","SG") -->
-<!-- AnnoARG <- read_gene_table(gene_type = "ARG",ide = 50,cov = 50,anno_dir = "01.rawdata/BP2_BK/01.PredictedValue/01.GenomeAnno/") -->
-<!-- genome_ARG_GCF <- AnnoARG$GCF -->
-<!-- genome_ARG_Species <- AnnoARG$Species -->
-<!-- genome_ARG_raw <- AnnoARG$raw -->
-
-<!-- # 五种功能基因批量处理 -->
-<!-- gene_results <- lapply(gene_types, read_gene_table) -->
-<!-- genome_ARG_GCF <- gene_results[[1]]$GCF -->
-<!-- genome_ARG_Species <- gene_results[[1]]$Species -->
-<!-- genome_ARG_raw <- gene_results[[1]]$raw -->
-
-<!-- genome_MGE_GCF <- gene_results[[2]]$GCF -->
-<!-- genome_MGE_Species <- gene_results[[2]]$Species -->
-<!-- genome_MGE_raw <- gene_results[[2]]$raw -->
-
-<!-- genome_MRG_GCF <- gene_results[[3]]$GCF -->
-<!-- genome_MRG_Species <- gene_results[[3]]$Species -->
-<!-- genome_MRG_raw <- gene_results[[3]]$raw -->
-
-<!-- genome_VF_GCF <- gene_results[[4]]$GCF -->
-<!-- genome_VF_Species <- gene_results[[4]]$Species -->
-<!-- genome_VF_raw <- gene_results[[4]]$raw -->
-
-<!-- genome_SG_GCF <- gene_results[[5]]$GCF -->
-<!-- genome_SG_Species <- gene_results[[5]]$Species -->
-<!-- genome_SG_raw <- gene_results[[5]]$raw -->
-
-
-
-<!-- # 定义函数 -->
-<!-- get_ARG_abundance <- function(BacTvalue, genome_Gene_GCF) { -->
-<!--   BacTvalue %>% -->
-<!--     left_join(genome_Gene_GCF, by = "ID") %>% -->
-<!--     mutate(Count = ifelse(is.na(Count), 0, Count)) %>% -->
-<!--     { -->
-<!--       abundance_cols <- setdiff(colnames(.), -->
-<!--                                 c("ID", "Taxonomy", "Lineage", "DB", "Count")) -->
-<!--       mutate(., across(all_of(abundance_cols), ~ .x * Count)) -->
-<!--     } %>% -->
-<!--     select(-Count, -DB) -->
-<!-- } -->
-
-<!-- # 使用示例 -->
-<!-- Tvalue_ARG <- get_ARG_abundance(BacTvalue = BacTvalue , genome_Gene_GCF = genome_ARG_GCF) -->
-<!-- Tvalue_MGE <- get_ARG_abundance(BacTvalue = BacTvalue , genome_Gene_GCF = genome_MGE_GCF) -->
-<!-- Tvalue_MRG <- get_ARG_abundance(BacTvalue = BacTvalue , genome_Gene_GCF = genome_MRG_GCF) -->
-<!-- Tvalue_VF  <- get_ARG_abundance(BacTvalue = BacTvalue , genome_Gene_GCF = genome_VF_GCF) -->
-<!-- Tvalue_SG  <- get_ARG_abundance(BacTvalue = BacTvalue , genome_Gene_GCF = genome_SG_GCF) -->
-
-<!-- # 真实值输出 -->
-<!-- write.table(Tvalue_ARG,file = "01.rawdata/BP2_BK/98.TrueValue/Tvalue_ARG.txt",row.names = F,quote = F,sep = "\t") -->
-<!-- write.table(Tvalue_MGE,file = "01.rawdata/BP2_BK/98.TrueValue/Tvalue_MGE.txt",row.names = F,quote = F,sep = "\t") -->
-<!-- write.table(Tvalue_MRG,file = "01.rawdata/BP2_BK/98.TrueValue/Tvalue_MRG.txt",row.names = F,quote = F,sep = "\t") -->
-<!-- write.table(Tvalue_VF ,file = "01.rawdata/BP2_BK/98.TrueValue/Tvalue_VF.txt",row.names = F,quote = F,sep = "\t") -->
-<!-- write.table(Tvalue_SG ,file = "01.rawdata/BP2_BK/98.TrueValue/Tvalue_SG.txt",row.names = F,quote = F,sep = "\t") -->
-
-
-<!-- ``` -->
-
-
-
-
-
-# filter_abundance.py测试
+# 附图-BKBac物种丰度评估
 ```{r}
-TaxIDAbu.S <- read.delim(file = "01.rawdata/BP2_BK/98.BKTest/TaxIDAbu.S",check.names = F)
-
-# 基于00.BPCode/filter_abundance.py
-# 以及00.BPCode/filter_abundance_multi.py
-# 所过滤的结果科学性验证
-TaxIDAbu.S.f1_0.0001 <- read.delim(file = "01.rawdata/BP2_BK/98.BKTest/TaxIDAbu.S.f1_0.0001",check.names = F)
-TaxIDAbu.S.f2_1000   <- read.delim(file = "01.rawdata/BP2_BK/98.BKTest/TaxIDAbu.S.f2_1000",check.names = F)
-TaxIDAbu.S.f3_5      <- read.delim(file = "01.rawdata/BP2_BK/98.BKTest/TaxIDAbu.S.f3_5",check.names = F)
-TaxIDAbu.S.f4_0.0001 <- read.delim(file = "01.rawdata/BP2_BK/98.BKTest/TaxIDAbu.S.f4_0.0001",check.names = F)
-TaxIDAbu.S.f5_50     <- read.delim(file = "01.rawdata/BP2_BK/98.BKTest/TaxIDAbu.S.f5_50",check.names = F)
-TaxIDAbu.S.f6_0.001     <- read.delim(file = "01.rawdata/BP2_BK/98.BKTest/TaxIDAbu.S.f6_0.001",check.names = F)
-uniq_c(TaxIDAbu.S.f6_0.001$`T3-0`)
-
-# filter_function
-LTaxIDAbu.S.f1_0.0001   <- LorMe04::Filter_function(input = TaxIDAbu.S[,-33],format = 1,threshold = 0.0001,outformat = 1)
-LTaxIDAbu.S.f2_1000     <- LorMe04::Filter_function(input = TaxIDAbu.S[,-33],format = 2,threshold = 1000,outformat = 1)
-LTaxIDAbu.S.f3_5        <- LorMe04::Filter_function(input = TaxIDAbu.S[,-33],format = 3,threshold = 5,outformat = 1)
-LTaxIDAbu.S.f4_0.0001   <- LorMe04::Filter_function(input = TaxIDAbu.S[,-33],format = 4,threshold = 0.0001,outformat = 1)
-temp1 <- TaxIDAbu.S[,c(1,2,2,32)]
-LTaxIDAbu.S.f4_0.0001   <- LorMe04::Filter_function(input = temp1[,-33],format = 1,threshold = 0.001,outformat = 1)
-
-
-
-nrow(TaxIDAbu.S.f1_0.0001)
-nrow(TaxIDAbu.S.f2_1000  )
-nrow(TaxIDAbu.S.f3_5     )
-nrow(TaxIDAbu.S.f4_0.0001)
-nrow(TaxIDAbu.S.f5_50    )
-
-nrow(LTaxIDAbu.S.f1_0.0001)
-nrow(LTaxIDAbu.S.f2_1000  )
-nrow(LTaxIDAbu.S.f3_5     )
-nrow(LTaxIDAbu.S.f4_0.0001)
-
-
-FullAnalysis.f6_1e04.f2_0  <- read.delim(file = "01.rawdata/BP2_BK/98.BKTest/FullAnalysis.f6_1e-04.f2_0",check.names = F)
-FullAnalysis.f6_1e04.f2_5000  <- read.delim(file = "01.rawdata/BP2_BK/98.BKTest/FullAnalysis.f6_1e-04.f2_5000",check.names = F)
-LorMe.f6_1e04.f2_5000  <- LorMe04::Filter_function(input = FullAnalysis.f6_1e04.f2_0[,-33],format = 2,threshold = 5000,outformat = 1)
-
-```
-
-# BK-Bac物种丰度评估-附图-统计
-```{r}
-# 原始的分析内容-比较全面一点
-# df1 <- read.delim(file = "01.rawdata/BP2_BK/98.BKTest/Final.BacBKStep1.txt",check.names = F) %>% as.data.frame()
-# df1 <- left_join(df1,Group_TA,by=c("Sample"="ID"))
-# colnames(df1)[2] <- "level"
-
-df1 <- read.delim(file = "01.rawdata/BP2_BK/98.BKBac/Final.BacBK1.txt",check.names = F) %>% as.data.frame()
-df1 <- left_join(df1,Group_TA,by=c("Sample"="ID"))
-colnames(df1)[2] <- "level"
-
-
-datafram_melt <- reshape2::melt(df1, measure.vars=c(8:18))
-datafram_melt$level <- factor(datafram_melt$level,levels=c("Kingdom","Phylum","Class","Order","Family","Genus","Species") )
-datafram_melt_se <- Rmisc::summarySE(datafram_melt, measurevar="value", groupvars=c("SpeciesNumbers","level","Info","variable"))
-datafram_melt_se$level <- factor(datafram_melt_se$level,levels=c("Kingdom","Phylum","Class","Order","Family","Genus","Species") )
-datafram_melt_se$group <- paste0(datafram_melt_se$SpeciesNumbers,datafram_melt_se$Info)
-
-
-datafram_melt_se2 <- Rmisc::summarySE(datafram_melt, measurevar="value", groupvars=c("level","Info","variable"))
-datafram_melt_se2$level <- factor(datafram_melt_se2$level,levels=c("Kingdom","Phylum","Class","Order","Family","Genus","Species") )
-datafram_melt_se2$group <- paste0(datafram_melt_se2$Info)
-
-datafram_melt_se2$Info %>% head()
-
-df1 <- datafram_melt_se %>% filter(variable=="F1") %>% filter(level=="Species")
-df1 <- datafram_melt_se %>% filter(variable=="F1") 
-
-ggplot()+
-  # geom_point(aes(x = level,y = value,color=DB))+
-  geom_point(data =df1, aes(x = level,y = value,color=Info),alpha=.5)+
-  # 第一条line虚线
-  geom_line(data =df1,aes(x = level,y = value,group=group,color=Info),size=.2,alpha=.7,show.legend = F)+
-  # 第二条line实线
-  geom_line(data =df1,aes(x = level,y = value,group=group,color=Info),size=1,alpha=1,show.legend = F)+
-  geom_hline(yintercept = 0.8,linetype='dotted', col = 'red')+
-  facet_wrap(variable~Info)+
-  theme_bw()+xlab("")+ylab("")+
-  # scale_color_npg()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 0.5, vjust = 0.5))
-
-
-
-# 重新筛选阈值
-# PGTax阈值筛选
-df1 <- datafram_melt_se %>% filter(!variable %in%c("Spearman","AbundancePrecision","AbundanceRecall","AbundanceF1")) %>% 
-  filter(level!="Kingdom")  %>% filter(Info=="f5=0_f1=1e-04") 
-df2 <- datafram_melt %>% filter(!variable %in%  c("Spearman","AbundancePrecision","AbundanceRecall","AbundanceF1"))  %>%
-  filter(level!="Kingdom") %>% filter(Info=="f5=0_f1=1e-04") 
-
-
-
-df1 <- datafram_melt_se %>%
-  filter(
-    !variable %in% c("Spearman", "AbundancePrecision", "AbundanceRecall", "AbundanceF1"),
-    level != "Kingdom",
-    grepl("f5=0", Info)                # 先限定 f5=0
-  ) %>%
-  # 提取 f1 的数值部分，例如 "f5=0_f1=1e-04" -> 1e-04
-  mutate(
-    f1_value = as.numeric(sub(".*f1=", "", Info))
-  ) %>%
-  # 保证解析成功并且 f1 > 1e-5
-  filter(!is.na(f1_value), f1_value > 1e-5)
-
-df2 <- datafram_melt %>%
-  filter(
-    !variable %in% c("Spearman", "AbundancePrecision", "AbundanceRecall", "AbundanceF1"),
-    level != "Kingdom",
-    grepl("f5=0", Info)                # 先限定 f5=0
-  ) %>%
-  # 提取 f1 的数值部分，例如 "f5=0_f1=1e-04" -> 1e-04
-  mutate(
-    f1_value = as.numeric(sub(".*f1=", "", Info))
-  ) %>%
-  # 保证解析成功并且 f1 > 1e-5
-  filter(!is.na(f1_value), f1_value > 1e-5)
-
-df2_1 <- datafram_melt %>%
-  filter(
-    !variable %in% c("Spearman", "AbundancePrecision", "AbundanceRecall", "AbundanceF1"),
-    level != "Kingdom",
-    grepl("f5=0", Info)                # 先限定 f5=0
-  ) %>%filter(Info=="f5=0_f1=1e-04")
-
-df3 <- Rmisc::summarySE(df2, measurevar="value", groupvars=c("level","variable"))
-df4 <- Rmisc::summarySE(df2_1, measurevar="value", groupvars=c("level","variable"))
-
-
-cat("相对丰度过滤阈值")
-df1$Info %>% unique()
-
-cat("BK指标平均值滤阈值")
-df3_species <- df3 %>%
-  filter(level == "Species") %>%
-  mutate(value_percent = round(value * 100, 2))  # 转换为百分比，保留两位小数
-df3_species
-
-cat("BK指标最大值")
-df4_species <- df4 %>%
-  filter(level == "Species") %>%
-  mutate(value_percent = round(value * 100, 2))  # 转换为百分比，保留两位小数
-df4_species
-
-df4_species$value_percent
-
-
-df1$Info %>% unique()
-df1 <- df1 %>%
-  mutate(
-    thresholds = case_when(
-      Info == "f5=0_f1=6e-05"  ~ "6e-05",
-      Info == "f5=0_f1=8e-05"  ~ "8e-05",
-      Info == "f5=0_f1=1e-04"  ~ "1e-04",
-      Info == "f5=0_f1=1.2e-04"~ "1.2e-04",
-      Info == "f5=0_f1=1.4e-04"~ "1.4e-04",
-      TRUE ~ Info
-    )
-  )
-
-df1$Info <- df1$thresholds
+attach(BacBK)
 ggplot()+
   # geom_point(data = df2, aes(x = level,y = value,color=Info,shape=SpeciesNumbers),alpha=.5)+
-  geom_point(data =df1, aes(x = level,y = value,color=Info),alpha=.2)+
+  geom_point(data =BacBK, aes(x = level,y = value,color=Info),alpha=.2)+
   # 第一条line虚线
-  geom_line(data =df1,aes(x = level,y = value,group=group,color=Info),size=.8,alpha=.5,show.legend = F)+
+  geom_line(data =BacBK,aes(x = level,y = value,group=group,color=Info),size=.8,alpha=.5,show.legend = F)+
    geom_errorbar(
-    data = df1,
+    data = BKBac,
     aes(x = level,
         y = value,
         ymin = value - sd,
@@ -1099,7 +457,7 @@ ggplot()+
       title.position = "top"     # 标题位置
     )
   )
-ggsave("03.figure/S_Bac_line.pdf",height = 6,width = 6)
+ggsave("03.figureUP/S4_Bac_BK.pdf",height = 6,width = 6)
 
 
 ```
@@ -1108,7 +466,7 @@ ggsave("03.figure/S_Bac_line.pdf",height = 6,width = 6)
 
 
 
-# BK-Cor
+# 分析-BKCor
 1. 获取功能基因丰度表以及物种丰度表
 2. 基于Species水平和Subtypes水平进行分析
 3. Species水平丰度过滤
@@ -1129,7 +487,6 @@ ARG_ppm_subtype_SA <- read.delim("01.rawdata/BP2_BK/01.PredictedValue/06.Cor/SAR
 ARG_ppm_type_SA <- read.delim("01.rawdata/BP2_BK/01.PredictedValue/06.Cor/SARG-OUT.ppm.type.txt",check.names = F);colnames(ARG_ppm_type_SA)[1] <- "ID"
 Bac_kraken_S_ab <- read.delim("01.rawdata/BP2_BK/01.PredictedValue/06.Cor/taxonomy.table.S",check.names = F)
 Bac_kraken_P_ab <- read.delim("01.rawdata/BP2_BK/01.PredictedValue/06.Cor/taxonomy.table.P",check.names = F)
-
 
 # 输出Kraken2的TaxID，然后进行分析
 cor_tax <- read.delim( "01.rawdata/BP2_BK/01.PredictedValue/06.Cor/taxonomy.S") %>% .[,c(1:2)] %>% unique()
@@ -1217,7 +574,7 @@ write.table(Bac_kraken_S_ab_final,file = "01.rawdata/BP2_BK/01.PredictedValue/06
 ```
 
 
-# BK-BP2
+# 读入-BKBP
 ```{r}
 
 library(stringr)
@@ -1322,67 +679,12 @@ ggplot()+
         legend.key.size = unit(3, "pt"),
         legend.background = element_rect(fill="transparent"))
 
-ggsave("03.figure/S_All_line_filter.pdf",height = 6,width = 8)
+ggsave("03.figureUP/S_All_line_filter.pdf",height = 6,width = 8)
 
 ```
 
-# BK方法比较
+# 主图-最优阈值筛选
 ```{r}
-# BPsBK数据导入
-# BPBK <- read.delim(file = "01.rawdata/BP2_BK/04.FinalBK/01.BP/BK.ARGs.Info.txt",check.names = F) 
-BPBK <- read.delim(file = "01.rawdata/BP2_BK/04.FinalBK/01.BP/BK.ARGs.Info.txt",check.names = F) 
-BPBK_Species <- BPBK[which(BPBK$`Taxonomic Level`=="Species"),]
-BPBK_Species_tgc <- Rmisc::summarySE(BPBK_Species, measurevar="F1", groupvars=c("File")) 
-
-# Reads溯源数据导入
-ReadsBK <- read.delim(file = "01.rawdata/BP2_BK/04.FinalBK/02.Reads/BK.ARGs.Info.txt",check.names = F) 
-ReadsBK$TP <- as.numeric(ReadsBK$TP)
-ReadsBK$FP <- as.numeric(ReadsBK$FP)
-ReadsBK_Species <- ReadsBK[which(ReadsBK$`Taxonomic Level`=="Species"),]
-ReadsBK_Species_tgc <- Rmisc::summarySE(ReadsBK_Species, measurevar="F1", groupvars=c("File")) 
-
-# Contigs溯源数据导入
-ContigsBK <- read.delim(file = "01.rawdata/BP2_BK/04.FinalBK/03.Contigs/BK.ARGs.Info.txt",check.names = F) 
-ContigsBK$TP <- as.numeric(ContigsBK$TP)
-ContigsBK$FP <- as.numeric(ContigsBK$FP)
-ContigsBK_Species <- ContigsBK[which(ContigsBK$`Taxonomic Level`=="Species"),]
-ContigsBK_Species_tgc <- Rmisc::summarySE(ContigsBK_Species, measurevar="F1", groupvars=c("File")) 
-
-# MAGs溯源数据导入
-MAGsBK <- read.delim(file = "01.rawdata/BP2_BK/04.FinalBK/04.MAGs/BK.ARGs.Info.txt",check.names = F) 
-MAGsBK$TP <- as.numeric(MAGsBK$TP)
-MAGsBK$FP <- as.numeric(MAGsBK$FP)
-MAGsBK_Species <- MAGsBK[which(MAGsBK$`Taxonomic Level`=="Species"),]
-MAGsBK_Species_tgc <- Rmisc::summarySE(MAGsBK_Species, measurevar="F1", groupvars=c("File")) 
-
-# Cor溯源数据导入
-CorBK <- read.delim(file = "01.rawdata/BP2_BK/04.FinalBK/05.Cor/BK.ARGs.Info.txt",check.names = F) 
-CorBK$TP <- as.numeric(CorBK$TP)
-CorBK$FP <- as.numeric(CorBK$FP)
-CorBK_Species <- CorBK[which(CorBK$`Taxonomic Level`=="Species"),]
-CorBK_Species_tgc <- Rmisc::summarySE(CorBK_Species, measurevar="F1", groupvars=c("File")) 
-
-# MAGs和Cor的Bencmarker数据筛选，并忽略掉beta多样性相关指标
-
-MAGsBK2 <- MAGsBK %>% filter(File=="ARGs.i90.l90.e1e10_i90c90_hmmanno.f4_0.f5_0.f1_0.f6_0.BK")
-CorBK2 <- CorBK %>% filter(File=="ARGs.i00.l00.e1e0_i90c90_hmmanno.f4_0.f5_0.f1_0.f6_0.BK")
-MAGsBK2[,11:18] <- NA
-CorBK2[,11:18] <- NA
-
-BPBK$Method <- "BP-Tracer"
-ReadsBK$Method <- "Reads"
-ContigsBK$Method <- "Contigs"
-MAGsBK$Method <- "MAGs"
-CorBK$Method <- "Networks"
-MAGsBK2$Method <- "MAGs"
-CorBK2$Method <- "Networks"
-
-# 三种功能基因合并
-AllBK <- bind_rows(BPBK,ReadsBK,ContigsBK)
-colnames(AllBK)[2] <- "Level"
-AllBK <- left_join(AllBK,Group_TA,by=c("Sample"="ID"))
-
-
 # 筛选最优阈值——————————————————————————————————————————————————————
 # BP-Tracer阈值：Identify==95 & Length==20 & Evalue=="e1e5"
 # 丰度表阈值，按照 f4_0.001进行过滤
@@ -1467,7 +769,7 @@ BK1 <- ggplot()+
         legend.key.size = unit(4, "pt"),
         legend.background = element_rect(fill="transparent"))
 BK1
-plot_name <- paste0("03.figure/M_RG_line_filter.pdf")
+plot_name <- paste0("03.figureUP/M4_RG_line_filter.pdf")
 ggsave(plot_name,height = 8,width = 3)
 
 
@@ -1544,7 +846,7 @@ BK1_3
 ```
 
 
-# BK-F1
+# 主图-BK的F1value
 ```{r}
 attach(AllBK_filter)
 head(AllBK_filter)
@@ -1597,7 +899,7 @@ BK1_F1
 
 ```
 
-## 统计-基础指标
+# 统计-BK的F1指标
 ```{r}
 attach(datafram_melt_se2)
 cat("Bencmarker中BP-Tracer的F1指标：", "\n")
@@ -1621,7 +923,7 @@ datafram_melt_se2 %>%
 
 ```
 
-# BK-Beta
+# 主图-BK的Beta
 ```{r}
 attach(AllBK_filter)
 head(AllBK_filter)
@@ -1765,9 +1067,7 @@ P_rJSD
 
 ```
 
-
-
-## 统计-Beta指标
+#统计-BK的Beta指标
 ```{r}
 attach(dfBeta_melt_se2)
 cat("Bencmarker中BP-Tracer的L1指标：", "\n")
@@ -1849,7 +1149,7 @@ dfBeta_melt_se2 %>%
 ```
 
 
-# BK-序列利用率计算
+# 主图-BK的序列利用率计算
 ```{r}
 # 读取RawContigs文件
 # 文件list读取
@@ -2109,7 +1409,7 @@ P_SeqNum <- ggplot(data = Reads_use_filter, aes(x = Method, y = SequenceNumber, 
 P_SeqNum
 
 ```
-# BK-TPNum和ReadsPrecision可视化
+# 主图-BK的TPNum和ReadsPrecision
 ```{r}
 
 attach(AllBK_filter)
@@ -2211,24 +1511,8 @@ BK4
 
 
 
-# 合并最后的主图 
+# 主图-合并出图 
 ```{r}
-
-# (
-#   P_Pre | P_Rec | P_F1 | P_Seq  # 第一行 4 图
-# ) /
-# (
-#   P_L1 | P_L2 | P_BC | P_rJSD   # 第二行 4 图
-# ) +
-#   plot_layout(guides = "collect") &
-#   theme(
-#     legend.position = "top",
-#     plot.title = element_text(face = "bold"),
-#     plot.tag = element_text(face = "bold")
-#   )
-# 
-# ggsave(filename = "03.figure/M_BK1.pdf",height = 4,width = 8)
-
 
 
 # 最终设置版本
@@ -2237,7 +1521,7 @@ design1 <- c("123
               789")
 (P_Pre + P_Rec + P_F1 +P_BC +  P_L1 +  P_L2+   P_rJSD + P_SeqNum+ P_SeqFreq ) +
   plot_layout(design = design1)
-ggsave(filename = "03.figure/M_BK3.pdf",height = 6.5,width = 6.5)
+ggsave(filename = "03.figureUP/M4_BK3.pdf",height = 6.5,width = 6.5)
 
 
 
@@ -2247,16 +1531,12 @@ design1 <- c("123
               789")
 (P_Pre + P_Rec + P_F1 +P_BC +  P_L1 +  P_L2+   P_rJSD + P_SeqFreq + plot_spacer()  ) +
   plot_layout(design = design1)
-ggsave(filename = "03.figure/M_BK3_1.pdf",height = 6.5,width = 6.5)
+ggsave(filename = "03.figureUP/M4_BK3_1.pdf",height = 6.5,width = 6.5)
 
 
-
-# 有Legend的版本
-# P_CorARGs /P_CorARGs2
-# ggsave(filename = "03.figure/M_BK4.pdf",height = 6.5,width = 4)
 
 P_CorARGs2 /P_CorARGs*theme(legend.position = "none")
-ggsave(filename = "03.figure/M_BK4.pdf",height = 6.5,width = 3.5)
+ggsave(filename = "03.figureUP/M4_BK4.pdf",height = 6.5,width = 3.5)
 
 
 # 补充附图
@@ -2267,7 +1547,7 @@ ggsave(filename = "03.figure/M_BK4.pdf",height = 6.5,width = 3.5)
   plot_annotation(tag_levels = 'a') &  # 可选：为每个子图添加A、B、C等标签
   theme(plot.title = element_text(face = "bold"),plot.tag = element_text(face = "bold"))
 
-ggsave(filename = "03.figure/M_BK2.pdf", height = 6, width = 10)
+ggsave(filename = "03.figureUP/M4_BK2.pdf", height = 6, width = 10)
 
 
 ```
@@ -2294,14 +1574,6 @@ save(refseq_sim_1200,
      AllBK_filter,
      MAG_tax_final,
      Reads_use_filter_na,file = "02.datasave/04.BPBK.Rdata")
-
-```
-
-# 输出-数据可视化
-```{r}
-
-
-
 
 ```
 

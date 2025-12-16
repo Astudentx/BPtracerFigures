@@ -9,25 +9,34 @@
 # =============================
 # 目录结构控制
 # =============================
-00.libs/*.Rmd
-00.libs/*.R
-00.libs/*.sh
-00.libs.bak/
-01.rawdata/*
-02.datasave/
-03.figure/
-04.table/
-05.mainfigure/
-!03.figureUP/
-# 允许保留的整理版脚本
-!00.libs/*UP.Rmd
-!00.libs/*UP.R
-!01.rawdata/UniPathogenDB/
-01.rawdata/UniPathogenDB/*
-!01.rawdata/UniPathogenDB/UniPathogenDB.Rdata
-!01.rawdata/BP2_BK/
-01.rawdata/BP2_BK/*
-!01.rawdata/BP2_BK/99.Setting/
-!01.rawdata/BP2_BK/99.Setting/**
-01.rawdata/BP2_BK/99.Setting/**/.DS_Store
+/00.libs/*.Rmd
+/00.libs/*.R
+/00.libs/*.sh
+/00.libs.bak/
+/01.rawdata/*
+/02.datasave/
+/03.figure/
+/04.table/
+/05.mainfigure/
+
+# keep only curated UP scripts
+!/00.libs/*UP.Rmd
+!/00.libs/*UP.R
+
+# allow loading of pathogen DB (but still ignore its internals except the Rdata)
+!/01.rawdata/UniPathogenDB/
+/01.rawdata/UniPathogenDB/*
+!/01.rawdata/UniPathogenDB/UniPathogenDB.Rdata
+
+# allow BP2_BK settings folder only
+!/01.rawdata/BP2_BK/
+/01.rawdata/BP2_BK/**
+!/01.rawdata/BP2_BK/99.Setting/
+!/01.rawdata/BP2_BK/99.Setting/**
+/01.rawdata/BP2_BK/99.Setting/**/.DS_Store
+
+# allow specific env group file
+!/01.rawdata/BP2_Env/Group/Group_env_new_V2_sel.xlsx
+
 gitadd.sh
+00.libs/AI提示词.md

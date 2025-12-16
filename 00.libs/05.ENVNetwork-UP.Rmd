@@ -1,0 +1,440 @@
+---
+title: "5.Env_network_loop"
+author: "yaozhong_zhang"
+date: "8/24/2022"
+output: html_document
+---
+# Load packages and datasets
+```{r setup, include=FALSE}
+path <- getwd()
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = path)
+package <- c('readxl','magrittr','LorMe',
+             'ggtree','reshape2','ggplot2','dplyr','tidyr',
+             'readr','purrr','tibble','stringr','forcats',
+             'ggplot2','ggsci','ggridges','RColorBrewer',
+             'patchwork','ggpubr','zyzPackage','cowplot','ggrepel','ggraph')
+             
+lapply(package, function(x){library(x, character.only = T)}) 
+
+load(file = "01.rawdata/UniPathogenDB/UniPathogenDB.Rdata")
+load(file = "02.datasave/05.ENVNetwork_P.Rdata")
+
+```
+
+# Load grouping table
+Workflow: load dataset, reshape, build species-type source network, visualize.
+```{r}
+group_env <- read_xlsx("01.rawdata/BP2_Env/Group/Group_env_new_V2_sel.xlsx")
+group_env$Group <- factor(group_env$Group,levels = c("Human faeces","Cow rumen","Rhizosphere","Lake","Ocean","Compost","Effluents"))
+
+order <- group_env$sampleID
+order1 <- group_env %>% filter(Group=="Compost") %>% .[,1]
+order2 <- group_env %>% filter(Group=="Cow rumen") %>% .[,1]
+order3 <- group_env %>% filter(Group=="Lake") %>% .[,1]
+order4 <- group_env %>% filter(Group=="Human faeces") %>% .[,1]
+order5 <- group_env %>% filter(Group=="Rhizosphere") %>% .[,1]
+order6 <- group_env %>% filter(Group=="Ocean") %>% .[,1]
+order7 <- group_env %>% filter(Group=="Effluents") %>% .[,1]
+```
+
+
+# Analysis - adjacency matrices
+```{r}
+
+
+
+threshold = 0.8
+
+source_Function <- function(Prefix,ARG,MGE,MRG,VFDB,SG,order,threshold){
+  # Threshold based on sample count per environment
+  threshold <- (1-threshold)*nrow(order)
+  ARG <- ARG  %>% select(Species,Type,all_of(order$sampleID))
+  ARG <- aggregate(x = ARG[,-c(1:2)],by =  ARG[,c(1:2)],FUN = sum) %>% select(Species,all_of(order$sampleID),Type)
+  ARG <- ARG %>% LorMe04::Filter_function(.,threshold = threshold,format = 3,outformat = 1)
+  dfname <- paste0(Prefix,"_ARG")
+  assign(dfname,ARG,envir=.GlobalEnv)
+
+  MGE <- MGE  %>% select(Species,Type,all_of(order$sampleID))
+  MGE <- aggregate(x = MGE[,-c(1:2)],by =  MGE[,c(1:2)],FUN = sum) %>% select(Species,all_of(order$sampleID),Type)
+  MGE <- MGE %>% LorMe04::Filter_function(.,threshold = threshold,format = 3,outformat = 1)
+  dfname <- paste0(Prefix,"_MGE")
+  assign(dfname,MGE,envir=.GlobalEnv)
+
+  MRG <- MRG  %>% select(Species,Type,all_of(order$sampleID))
+  MRG <- aggregate(x = MRG[,-c(1:2)],by =  MRG[,c(1:2)],FUN = sum) %>% select(Species,all_of(order$sampleID),Type)
+  MRG <- MRG %>% LorMe04::Filter_function(.,threshold = threshold,format = 3,outformat = 1)
+  dfname <- paste0(Prefix,"_MRG")
+  assign(dfname,MRG,envir=.GlobalEnv)
+
+  VFDB <- VFDB  %>% select(Species,Type,all_of(order$sampleID))
+  VFDB <- aggregate(x = VFDB[,-c(1:2)],by =  VFDB[,c(1:2)],FUN = sum) %>% select(Species,all_of(order$sampleID),Type)
+  VFDB <- VFDB %>% LorMe04::Filter_function(.,threshold = threshold,format = 3,outformat = 1)
+  dfname <- paste0(Prefix,"_VFDB")
+  assign(dfname,VFDB,envir=.GlobalEnv)
+  
+  SG <- SG  %>% select(Species,Type,all_of(order$sampleID))
+  SG <- aggregate(x = SG[,-c(1:2)],by =  SG[,c(1:2)],FUN = sum) %>% select(Species,all_of(order$sampleID),Type)
+  SG <- SG %>% LorMe04::Filter_function(.,threshold = threshold,format = 3,outformat = 1)
+  dfname <- paste0(Prefix,"_SG")
+  assign(dfname,MRG,envir=.GlobalEnv)
+  
+  ARG_Species <-  ARG  %>% .[c(1,ncol(.))] %>% cbind(.,Kind="ARG")
+  MGE_Species <-  MGE  %>% .[c(1,ncol(.))] %>% cbind(.,Kind="MGE")
+  MRG_Species <-  MRG  %>% .[c(1,ncol(.))] %>% cbind(.,Kind="MRG")
+  VFDB_Species <- VFDB %>% .[c(1,ncol(.))] %>% cbind(.,Kind="VF")
+  SG_Species <- SG %>% .[c(1,ncol(.))] %>% cbind(.,Kind="SG")
+
+  
+  All_Species <- rbind(ARG_Species,MGE_Species,MRG_Species,VFDB_Species,SG_Species)
+  dfname <- paste0(Prefix,"_Species")
+  assign(dfname,All_Species,envir=.GlobalEnv)
+
+}
+
+
+
+source_Function(Prefix = "order1",ARG = ARG_ppm_source_ab,MGE =MGE_ppm_source_ab ,MRG = MRG_ppm_source_ab,VFDB = VFDB_ppm_source_ab,SG = SG_ppm_source_ab,order = order1,threshold = 0.7)
+source_Function(Prefix = "order2",ARG = ARG_ppm_source_ab,MGE =MGE_ppm_source_ab ,MRG = MRG_ppm_source_ab,VFDB = VFDB_ppm_source_ab,SG = SG_ppm_source_ab,order = order2,threshold = 0.7)
+source_Function(Prefix = "order3",ARG = ARG_ppm_source_ab,MGE =MGE_ppm_source_ab ,MRG = MRG_ppm_source_ab,VFDB = VFDB_ppm_source_ab,SG = SG_ppm_source_ab,order = order3,threshold = 0.7)
+source_Function(Prefix = "order4",ARG = ARG_ppm_source_ab,MGE =MGE_ppm_source_ab ,MRG = MRG_ppm_source_ab,VFDB = VFDB_ppm_source_ab,SG = SG_ppm_source_ab,order = order4,threshold = 0.7)
+source_Function(Prefix = "order5",ARG = ARG_ppm_source_ab,MGE =MGE_ppm_source_ab ,MRG = MRG_ppm_source_ab,VFDB = VFDB_ppm_source_ab,SG = SG_ppm_source_ab,order = order5,threshold = 0.7)
+source_Function(Prefix = "order6",ARG = ARG_ppm_source_ab,MGE =MGE_ppm_source_ab ,MRG = MRG_ppm_source_ab,VFDB = VFDB_ppm_source_ab,SG = SG_ppm_source_ab,order = order6,threshold = 0.7)
+source_Function(Prefix = "order7",ARG = ARG_ppm_source_ab,MGE =MGE_ppm_source_ab ,MRG = MRG_ppm_source_ab,VFDB = VFDB_ppm_source_ab,SG = SG_ppm_source_ab,order = order7,threshold = 0.7)
+
+
+attach(order1_Species)
+attach(order2_Species)
+attach(order3_Species)
+attach(order4_Species)
+attach(order5_Species)
+attach(order6_Species)
+attach(order7_Species)
+
+order1 <- group_env %>% filter(Group=="Compost") %>% .[,1]
+order2 <- group_env %>% filter(Group=="Cow rumen") %>% .[,1]
+order3 <- group_env %>% filter(Group=="Lake") %>% .[,1]
+order4 <- group_env %>% filter(Group=="Human faeces") %>% .[,1]
+order5 <- group_env %>% filter(Group=="Rhizosphere") %>% .[,1]
+order6 <- group_env %>% filter(Group=="Ocean") %>% .[,1]
+order7 <- group_env %>% filter(Group=="Effluents") %>% .[,1]
+
+Species_type_final <- data.frame(stringsAsFactors = F)
+for (i in 1:7) {
+  order_Species <- list(order1_Species,
+                        order2_Species,
+                        order3_Species,
+                        order4_Species,
+                        order5_Species,
+                        order6_Species,
+                        order7_Species) %>% .[[i]]
+  Group <- c("Compost",
+             "Cow rumen",
+             "Lake",
+             "Human faeces",
+             "Rhizosphere",
+             "Ocean",
+             "Effluents") %>% .[i]
+  order_Species$Env <- Group
+  order_Species_PA <- order_Species[which(order_Species$Species %in% NewPA_Air$Species),]
+  order_Species_PA$Pathogen <- "Pathogen"
+  order_Species_NonPA <- order_Species[which(!order_Species$Species %in% NewPA_Air$Species),]
+  order_Species_NonPA$Pathogen <- "NonPathogen"
+  order_Species <- rbind(order_Species_PA,order_Species_NonPA)
+  Species_type_final <- rbind(Species_type_final,order_Species)
+}
+
+attach(Species_type_final)
+
+
+# Pathogen vs non-pathogen counts across environments
+Species_stat <- Species_type_final %>% .[,-2] %>% unique() %>% select(Kind,Env,Pathogen) %>% uniq_c_df(.,count = T)
+Species_stat_comb <- Species_type_final %>% .[,-c(2:3)] %>% unique() %>% select(Env,Pathogen) %>% uniq_c_df(.,count = T)
+Species_stat_comb$Kind <- "All" 
+Species_stat_comb <- Species_stat_comb%>% select(Kind,everything())
+Species_stat_final <- rbind(Species_stat,Species_stat_comb)
+
+
+Species_type_stat <- Species_type_final %>% select(Kind,Env,Pathogen) %>% uniq_c_df(.,count = T)
+Species_type_stat$Env <- factor(Species_type_stat$Env,levels = c("Human faeces","Cow rumen","Rhizosphere","Lake","Ocean","Compost","Effluents"))
+Species_type_stat$Kind <- factor(Species_type_stat$Kind,levels = rev(c("ARG","MGE","MRG","VF","SG")))
+```
+
+# Statistics - network loop analysis
+```{r}
+{
+  # Avoid duplicate "Others" labels across gene kinds
+  rownumber1 <- which(order1_Species$Type=="Others")
+  rownumber2 <- which(order2_Species$Type=="Others")
+  rownumber3 <- which(order3_Species$Type=="Others")
+  rownumber4 <- which(order4_Species$Type=="Others")
+  rownumber5 <- which(order5_Species$Type=="Others")
+  rownumber6 <- which(order6_Species$Type=="Others")
+  rownumber7 <- which(order7_Species$Type=="Others")
+  order1_Species$Type[rownumber1] <- paste0(order1_Species$Type[rownumber1],"_",order1_Species$Kind[rownumber1])
+  order2_Species$Type[rownumber2] <- paste0(order2_Species$Type[rownumber2],"_",order2_Species$Kind[rownumber2])
+  order3_Species$Type[rownumber3] <- paste0(order3_Species$Type[rownumber3],"_",order3_Species$Kind[rownumber3])
+  order4_Species$Type[rownumber4] <- paste0(order4_Species$Type[rownumber4],"_",order4_Species$Kind[rownumber4])
+  order5_Species$Type[rownumber5] <- paste0(order5_Species$Type[rownumber5],"_",order5_Species$Kind[rownumber5])
+  order6_Species$Type[rownumber6] <- paste0(order6_Species$Type[rownumber6],"_",order6_Species$Kind[rownumber6])
+  order7_Species$Type[rownumber7] <- paste0(order7_Species$Type[rownumber7],"_",order7_Species$Kind[rownumber7])
+}
+
+
+
+
+# Build igraph objects
+
+order1_All_graph <- igraph::graph_from_data_frame(order1_Species[,c(1:2)],directed = F)
+order2_All_graph <- igraph::graph_from_data_frame(order2_Species[,c(1:2)],directed = F)
+order3_All_graph <- igraph::graph_from_data_frame(order3_Species[,c(1:2)],directed = F)
+order4_All_graph <- igraph::graph_from_data_frame(order4_Species[,c(1:2)],directed = F)
+order5_All_graph <- igraph::graph_from_data_frame(order5_Species[,c(1:2)],directed = F)
+order6_All_graph <- igraph::graph_from_data_frame(order6_Species[,c(1:2)],directed = F)
+order7_All_graph <- igraph::graph_from_data_frame(order7_Species[,c(1:2)],directed = F)
+
+
+
+zyz_net_stat <- function (input) {
+  require(igraph)
+  # cat("Total degree:", sum(degree(input)))
+  cat("\n      Total edges/links:", length(E(input)))
+  cat("\nTotal vertices:", length(V(input)))
+  cat("\nConnectance:", edge_density(input, loops = FALSE))
+  cat("\nAverage degree:", mean(igraph::degree(input)))
+  cat("\nDiameter:", diameter(input, directed = FALSE, unconnected = TRUE, weights = NULL))
+  cat("\nAverage path length:", average.path.length(input))
+  cat("\nGlobal clustering coefficient:", transitivity(input))
+  cat("\nNumber of clusters:", no.clusters(input))
+  cat("\nBetweenness centralization:", centralization.betweenness(input)$centralization)
+  cat("\nDegree centralization:", centralization.degree(input)$centralization)
+  
+  `Total edges` <-  length(E(input))
+  `Total vertices` <-  length(V(input))
+  `Connectance` <-  edge_density(input, loops = FALSE)
+  `Average degree` <-  mean(igraph::degree(input))
+  `Diameter` <-  diameter(input, directed = FALSE, unconnected = TRUE, weights = NULL)
+  `Average path length` <-  average.path.length(input)
+  `Global clustering coefficient` <-  transitivity(input)
+  `Number of clusters` <-  no.clusters(input)
+  `Betweenness centralization` <-  centralization.betweenness(input)$centralization
+  `Degree centralization` <-  centralization.degree(input)$centralization
+  
+  model.num <- cluster_fast_greedy(input) %>% membership() %>% table() %>% 
+  as.data.frame() %>%  # Module size table
+  filter(Freq>50) %>%  # Modules with size > 50
+  nrow()               # Count modules
+  
+  stat <- data.frame(`Total edges`= `Total edges`,
+             `Total vertices`= `Total vertices`,
+             `Connectance`= `Connectance`,
+             `Average degree`= `Average degree`,
+             `Diameter`= `Diameter`,
+             `Average path length`= `Average path length`,
+             `Global clustering coefficient`= `Global clustering coefficient`,
+             `Number of clusters`= `Number of clusters`,
+             `Betweenness centralization`= `Betweenness centralization`,
+             `Degree centralization`= `Degree centralization`,
+             `model.num (node>50)`=model.num)
+  return(stat)
+}
+
+stat1 <- zyz_net_stat(order1_All_graph) %>% cbind(Group="Compost")
+stat2 <- zyz_net_stat(order2_All_graph) %>% cbind(Group="Cow rumen")
+stat3 <- zyz_net_stat(order3_All_graph) %>% cbind(Group="Lake")
+stat4 <- zyz_net_stat(order4_All_graph) %>% cbind(Group="Human faeces")
+stat5 <- zyz_net_stat(order5_All_graph) %>% cbind(Group="Rhizosphere")
+stat6 <- zyz_net_stat(order6_All_graph) %>% cbind(Group="Ocean")
+stat7 <- zyz_net_stat(order7_All_graph) %>% cbind(Group="Effluents")
+
+network_final_state <- rbind(stat1,
+                             stat2, 
+                             stat3, 
+                             stat4, 
+                             stat5, 
+                             stat6, 
+                             stat7 )
+```
+
+
+# Appendix - network visualization
+```{r}
+library(igraph)
+
+igraph_Function <- function(igraph,Species,title){
+  if (missing(title)) {title =NA}
+  library(igraph)
+  All_graph <- igraph
+  Species <- Species
+  ARG_Species  <- Species[which(Species$Kind=="ARG"),]
+  MGE_Species  <- Species[which(Species$Kind=="MGE"),]
+  MRG_Species  <- Species[which(Species$Kind=="MRG"),]
+  VFDB_Species <- Species[which(Species$Kind=="VFDB"),]
+  SG_Species <- Species[which(Species$Kind=="SG"),]
+
+  V(All_graph)$shape <- "circle"
+  # Node size mapping
+  V(All_graph)$size <- V(All_graph)$name
+  V(All_graph)$size[!V(All_graph)$size %in% c(ARG_Species$Type,MGE_Species$Type,MRG_Species$Type,VFDB_Species$Type,SG_Species$Type,NewPA_Air$Species)] <- 2
+  V(All_graph)$size[V(All_graph)$size %in% ARG_Species$Type] <- 4
+  V(All_graph)$size[V(All_graph)$size %in% MGE_Species$Type] <- 4
+  V(All_graph)$size[V(All_graph)$size %in% MRG_Species$Type] <- 4
+  V(All_graph)$size[V(All_graph)$size %in% VFDB_Species$Type] <- 4
+  V(All_graph)$size[V(All_graph)$size %in% SG_Species$Type] <- 4
+  V(All_graph)$size[V(All_graph)$size %in% NewPA_Air$Species] <- 4
+  
+  tits_nodesizes <- as.numeric(V(All_graph)$size);unique(tits_nodesizes)
+  
+  
+  # Shape mapping
+  V(All_graph)$shape <- V(All_graph)$name
+  V(All_graph)$shape[V(All_graph)$shape %in% ARG_Species$Type]  <- "square"
+  V(All_graph)$shape[V(All_graph)$shape %in% MGE_Species$Type]  <- "square"
+  V(All_graph)$shape[V(All_graph)$shape %in% MRG_Species$Type]  <- "square"
+  V(All_graph)$shape[V(All_graph)$shape %in% VFDB_Species$Type] <- "square"
+  V(All_graph)$shape[V(All_graph)$shape %in% SG_Species$Type] <- "square"
+
+  V(All_graph)$shape[!V(All_graph)$shape %in% c("square")] <- "circle"
+  
+  V(All_graph)$frame.color <- NA
+  
+  # Color mapping
+  V(All_graph)$color <- V(All_graph)$name
+  V(All_graph)$color[V(All_graph)$color %in% ARG_Species$Type]  <- "ARG"
+  V(All_graph)$color[V(All_graph)$color %in% MGE_Species$Type]  <- "MGE"
+  V(All_graph)$color[V(All_graph)$color %in% MRG_Species$Type]  <- "MRG"
+  V(All_graph)$color[V(All_graph)$color %in% VFDB_Species$Type] <- "VFDB"
+  V(All_graph)$color[V(All_graph)$color %in% SG_Species$Type] <- "SG"
+
+  V(All_graph)$color[V(All_graph)$color %in% NewPA_Air$Species] <- "Pathogen"
+  V(All_graph)$color[!V(All_graph)$color %in% c("ARG","MGE","MRG","VFDB","SG","Pathogen")] <- "NonPathogen"
+  
+  V(All_graph)$color[V(All_graph)$color == "Pathogen" ]    <- "#FF6347"
+  V(All_graph)$color[V(All_graph)$color == "NonPathogen" ] <- "#1E90FF"
+  V(All_graph)$color[V(All_graph)$color == "ARG"]          <- "#52DB48"
+  V(All_graph)$color[V(All_graph)$color == "MGE"]          <- "#8B008B"
+  V(All_graph)$color[V(All_graph)$color == "MRG"]          <- "#F2D444"
+  V(All_graph)$color[V(All_graph)$color == "VFDB"]         <- "#BEA6EB"
+  V(All_graph)$color[V(All_graph)$color == "SG"]         <- "#BEE2EB"
+
+  
+  label <- c("Pathogen", 
+             "NonPathogen",
+             "ARG",
+             "MGE",
+             "MRG",
+             "VFDB",
+             "SG")
+  
+  colrs <- c("#FF6347",
+             "#1E90FF",
+             "#52DB48",
+             "#8B008B",
+             "#F2D444",
+             "#BEA6EB",
+             "#BEE2EB")
+  pch <- c(21,21,22,22,22,22)
+  
+  set.seed(99)
+  coords_t_its <- layout_(All_graph,with_fr(niter=99, grid="nogrid"))
+  fig1 <- plot(All_graph,
+              main = title,
+               vertex.size=tits_nodesizes, 
+               layout=coords_t_its,
+               vertex.label=NA)
+  return(fig1)
+
+}
+
+pdf("03.figureUP/S11_fianl_network.pdf",width = 18,height = 6)
+
+par(mfrow=c(1,7),mar=c(.2,.2,.2,.2))
+for (i in 1:7) {
+  order_Species <- list(order4_Species,
+                        order2_Species,
+                        order5_Species,
+                        order3_Species,
+                        order6_Species,
+                        order1_Species,
+                        order7_Species) %>% .[[i]]
+  order_All_graph <- list(order4_All_graph,
+                          order2_All_graph,
+                          order5_All_graph,
+                          order3_All_graph,
+                          order6_All_graph,
+                          order1_All_graph,
+                          order7_All_graph) %>% .[[i]]
+  
+  Group <- c("Human faeces",
+             "Cow rumen",
+             "Rhizosphere",
+             "Lake",
+             "Ocean",
+             "Compost",
+             "Effluents") %>% .[i]
+    
+  
+  plotname <- paste0("03.figure/S11_Network_NEW_",i,Group,".pdf")
+  # pdf(plotname,width = 6,height = 6)
+  igraph_Function(order_All_graph,order_Species,title = Group)
+  # dev.off()
+}
+dev.off()
+label <- c("Pathogen", 
+           "NonPathogen",
+           "ARGs",
+           "MGEs",
+           "MRGs",
+           "VFs",
+           "SGs")
+
+colrs <- c("#FF6347",
+           "#1E90FF",
+           "#52DB48",
+           "#8B008B",
+           "#F2D444",
+           "#BEA6EB",
+           "#BEE2EB")
+pch <- c(21,21,22,22,22,22)
+
+
+```
+# Appendix - legend
+```{r}
+library(LorMe)
+library(igraph)
+### Data preparation ###
+data(testotu)
+rownames(testotu)<-testotu[,1]
+inputotu<-testotu[,-c(1,ncol(testotu))]
+head(inputotu)
+
+### One input network analysis ###
+network_result<-LorMe04::network_analysis(inputotu,3,10,0.9,"spearman",T)
+
+legend(x=-1.5, y=0, 
+       label, 
+       pch=pch,
+       pt.bg=colrs,
+       col="#777777", pt.cex=2, cex=.8, bty="n", ncol=1)
+
+
+
+```
+
+# Output - save data
+```{r}
+network_final_state %>% select(Group,Average.degree) %>% arrange(.,Average.degree)
+network_final_state %>% select(Group,Connectance) %>% arrange(.,Connectance)
+network_final_state <- network_final_state %>% select(Group,Average.degree,Connectance,everything())
+save(
+  # Group file
+  network_final_state,
+  file = "02.datasave/05.ENVNetwork.Rdata"
+)
+
+head(network_final_state)
+
+```
+
+

@@ -1,0 +1,1925 @@
+---
+title: "5.ENV_4Compare"
+author: "yaozhong_zhang"
+date: "2023-10-09"
+output: html_document
+---
+# Load - Base Functions
+```{r}
+
+path <- getwd()
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = path)
+
+package <- c('readxl','magrittr','LorMe',
+             'reshape2','ggplot2','dplyr','tidyr',
+             'readr','purrr','tibble','stringr','forcats',
+             'ggplot2','ggsci','ggridges','RColorBrewer','pheatmap',
+             'patchwork','ggpubr','zyzPackage','cowplot','ggrepel','networkD3',"aplot","ggalluvial","data.table","ggplotify")
+select <- dplyr::select
+lapply(package, function(x){library(x, character.only = T)}) 
+load(file = "02.datasave/00.RefseqTaxonomy.Rdata")
+load(file = "01.rawdata/UniPathogenDB/UniPathogenDB.Rdata")
+
+attach(Pangenome_taxref)
+attach(NewPA_Air)
+
+taxnonmy_pan <- function(prefix,df,order,levels){
+  df <- as.data.frame(df)
+  taxlevel <- cbind(
+  taxnonmy=c("Domain","Phylum","Class","Order","Family","Genus","Species"),
+  levels=c("D","P","C","O","F","G","S")
+                  ) %>% as.data.frame()
+  df_Tax <- left_join(df,Pangenome_taxref,by=c("ID"="SpeciesID")) %>% na.omit() 
+  taxlevel_select <- taxlevel[which(taxlevel$levels %in% levels),]
+  num <- nrow(taxlevel_select)
+  for (i in 1:num) {
+      level_final <- taxlevel_select$taxnonmy[i]
+      df_name <- paste0(prefix,"_",taxlevel_select$levels[i])
+      df <- df_Tax %>% select(all_of(level_final),all_of(order))
+      df <- aggregate(x = df[,-1],by = list(df[,1]),FUN = sum)
+      colnames(df)[1] <- "ID"
+      df <- df[which(rowSums(df[,-1])!=0),]
+      assign(df_name,df,envir=.GlobalEnv)
+  }
+}
+
+PA_abundance <- function(pathogen,abundance){
+  col_names <- colnames(abundance)[-1]
+  abundance_PA <- abundance[which(abundance$ID %in% pathogen  ),]
+  abundance_NonPA <- abundance[which(!abundance$ID %in% pathogen  ),]
+  print(paste0("Nrow of TP: ",nrow(abundance)))
+  print(paste0("Nrow of FP: ",nrow(abundance_PA)))
+  print(paste0("Nrow of All: ",nrow(abundance_NonPA)))
+  abundance_PA_NonPA <- rbind(cbind(abundance_PA,Kind="Pathogen"),cbind(abundance_NonPA,Kind="NonPathogen"))
+  abundance_PA_NonPA <- abundance_PA_NonPA %>% dplyr::select(Kind,all_of(col_names))
+  abundance_PA_NonPA[is.na(abundance_PA_NonPA)] <- 0
+  abundance_PA_NonPA_ab <- aggregate(abundance_PA_NonPA[,-1],by=list(abundance_PA_NonPA$Kind),FUN=sum)
+  colnames(abundance_PA_NonPA_ab)[1] <- "ID"
+  return(abundance_PA_NonPA_ab)
+}
+
+
+profile2df <- function(prefix,profile,n,group){
+  cat("##################1.Check#####################","\n")
+  cat("Group order must be same like the profiles","\n")
+  if (colnames(profile)[1]=="ID") {
+    cat("profile colnames must be ID, pass check","\n")
+  }else{
+    colnames(profile)[1] <- "ID"
+    cat("profile colnames must be ID, do not pass check, and change to The ID","\n")
+  }
+  if (colnames(group)[1]=="ID") {
+    cat("Group colnames must be ID, pass check","\n")
+  }else{
+    colnames(group)[1] <- "ID"
+    cat("Group colnames must be ID, do not pass check, and change to The ID","\n")
+  }
+  profile <- profile %>% select(ID,all_of(group$ID))
+  
+  cat("##################2.analysis#####################","\n")
+  top_df <- Top_taxa(input =profile, n = n,inputformat = 2,outformat = 1) 
+  Group_col <-  combine_and_translate(inputframe = rownames_zyz(top_df),groupframe = group,itemname = "variable",indexname = "value",inputtype = T) 
+
+  temp_order <- top_df$ID
+  Group_col$ID <- factor(Group_col$ID,levels = group$ID)
+  Group_col$variable <-  factor(Group_col$variable,levels =temp_order)
+  
+  df_name1 <-  paste0(prefix,"_top")
+  df_name2 <-  paste0(prefix,"_col")
+  assign(df_name1,top_df,envir=.GlobalEnv)
+  assign(df_name2,Group_col,envir=.GlobalEnv)
+  cat("Please check the Top profiles of",df_name1,"\n")
+  cat("Please check the col dataframe of",df_name2,"\n")
+  return(Group_col)
+}
+
+# Pathogen helper functions
+
+PA_select <- function(pathogen,abundance){
+  abundance <- abundance
+  colnames(abundance)[1] <- "ID"
+  abundance_PA <- abundance[which(abundance$ID %in% pathogen),]
+  return(abundance_PA)
+}
+NonPA_select <- function(pathogen,abundance){
+  abundance <- abundance
+  colnames(abundance)[1] <- "ID"
+  abundance_NonPA <- abundance[which(!abundance$ID %in% pathogen),]
+  return(abundance_NonPA)
+}
+
+PA_comb <-function(pathogen,abundance){
+  abundance <- abundance
+  colnames(abundance)[1] <- "ID"
+  abundance_PA <- abundance[which(abundance$ID %in% pathogen),]
+  abundance_NonPA <- abundance[which(!abundance$ID %in% pathogen),]
+  abundance_NonPA_sum <- colSums(abundance_NonPA[,-1]) %>% t() %>% as.data.frame() 
+  abundance_NonPA_sum$ID <- "NonPathogen"
+  abundance_NonPA_sum <- abundance_NonPA_sum %>% dplyr::select(ID,everything())
+  abundance_NonPA_com <- rbind(abundance_PA,abundance_NonPA_sum)
+}
+
+
+Rs_list = c('Ralstonia pseudosolanacearum','Ralstonia solanacearum','blood disease bacterium A2-HR MARDI')
+Rs_comb <-function(Rs_list=c('Ralstonia pseudosolanacearum','Ralstonia solanacearum','blood disease bacterium A2-HR MARDI'),abundance){
+  abundance <- abundance
+  colnames(abundance)[1] <- "ID"
+  abundance_Rs <- abundance[which(abundance$ID %in% Rs_list),]
+  abundance_NonRs <- abundance[which(!abundance$ID %in% Rs_list),]
+  abundance_Rs_sum <- colSums(abundance_Rs[,-1]) %>% t() %>% as.data.frame() 
+  abundance_Rs_sum$ID <- "Ralstonia solanacearum"
+  abundance_Rs_sum <- abundance_Rs_sum %>% dplyr::select(ID,everything())
+  abundance_Rs_com <- rbind(abundance_Rs_sum,abundance_NonRs)
+  return(abundance_Rs_com)
+}
+
+
+PA_comb_top <-function(pathogen,abundance,n){
+  abundance <- abundance
+  colnames(abundance)[1] <- "ID"
+  abundance_PA <- abundance[which(abundance$ID %in% pathogen),]
+  abundance_PAtop <- Top_taxa(input =abundance_PA, n = n,inputformat = 2,outformat = 1) %>% .[1:c(n-1),]
+  PA_ID <- abundance_PAtop$ID
+  str(abundance_PAtop$ID)
+  abundance_NonPAOthers <- abundance[which(!abundance$ID %in% PA_ID),]
+  test <- colSums(abundance_PAtop[-nrow(abundance_PAtop),-1]) %>% t() %>% as.data.frame() 
+  abundance_NonPAOthers_sum <- colSums(abundance_NonPAOthers[,-1]) %>% t() %>% as.data.frame() 
+  abundance_NonPAOthers_sum$ID <- "Rare/None-Pathogens"
+  abundance_NonPAOthers_sum <- abundance_NonPAOthers_sum %>% dplyr::select(colnames(abundance_PAtop))
+  abundance_NonPAOthers_com <- rbind(abundance_PAtop,abundance_NonPAOthers_sum)
+}
+
+
+PA_stat <-function(pathogen,abundance){
+  abundance <- abundance
+  colnames(abundance)[1] <- "ID"
+  abundance_PA <- abundance[which(abundance$ID %in% pathogen),]
+  abundance_NonPA <- abundance[which(!abundance$ID %in% pathogen),]
+  abundance_PA_sum <- colSums(abundance_PA[,-1]) %>% t() %>% as.data.frame() 
+  abundance_PA_sum$ID <- "Pathogen"
+  abundance_PA_sum <- abundance_PA_sum %>% dplyr::select(ID,everything())
+  abundance_NonPA_sum <- colSums(abundance_NonPA[,-1]) %>% t() %>% as.data.frame() 
+  abundance_NonPA_sum$ID <- "NonPathogen"
+  abundance_NonPA_sum <- abundance_NonPA_sum %>% dplyr::select(ID,everything())
+  abundance_stat<- rbind(abundance_PA_sum,abundance_NonPA_sum)
+  return(abundance_stat)
+}
+
+# test1 <- PA_stat(pathogen = NewPA_Air$Species,abundance = ARG_S_ab)
+# colSums(test1[,-1])
+# colSums(ARG_S_ab[,-1])
+
+profile2df_dir <- function(prefix,profile,group){
+  cat("##################1.Check#####################","\n")
+  cat("Group order must be same like the profiles","\n")
+  if (colnames(profile)[1]=="ID") {
+    cat("profile colnames must be ID, pass check","\n")
+  }else{
+    colnames(profile)[1] <- "ID"
+    cat("profile colnames must be ID, do not pass check, and change to The ID","\n")
+  }
+  if (colnames(group)[1]=="ID") {
+    cat("Group colnames must be ID, pass check","\n")
+  }else{
+    colnames(group)[1] <- "ID"
+    cat("Group colnames must be ID, do not pass check, and change to The ID","\n")
+  }
+  profile <- profile %>% dplyr::select(ID,all_of(group$ID))
+
+  cat("##################2.analysis#####################","\n")
+  top_df <- profile
+  Group_col <-  combine_and_translate(inputframe = rownames_zyz(top_df),groupframe = group,itemname = "variable",indexname = "value",inputtype = T) 
+
+  temp_order <- top_df$ID
+  Group_col$ID <- factor(Group_col$ID,levels = group$ID)
+  Group_col$variable <-  factor(Group_col$variable,levels =temp_order)
+  
+  # df_name1 <-  paste0(prefix,"_top")
+  df_name2 <-  paste0(prefix,"_col")
+  # assign(df_name1,top_df,envir=.GlobalEnv)
+  assign(df_name2,Group_col,envir=.GlobalEnv)
+  # cat("Please check the Top profiles of",df_name1,"\n")
+  cat("Please check the col dataframe of",df_name2,"\n")
+  return(Group_col)
+}
+
+load("02.datasave/test.Rdata")
+attach(ARG_S_ab)
+ARG_S_ab_PA <- PA_select(pathogen = NewPA_Air$Species,abundance=ARG_S_ab)
+ARG_S_ab_NoPA <- NonPA_select(pathogen = NewPA_Air$Species,abundance=ARG_S_ab)
+ARG_S_ab_comb <- PA_comb(pathogen = NewPA_Air$Species,abundance=ARG_S_ab)
+
+ARG_S_ab_PAtop <- PA_comb_top(pathogen = NewPA_Air$Species,abundance=ARG_S_ab,n=9)
+ARG_S_ab_Stat <- PA_abundance(pathogen=NewPA_Air$Species,abundance=ARG_S_ab)
+
+profile2df(prefix = "All_species_Top",profile = ARG_S_ab,n = 6,group = Group)
+profile2df_dir(prefix = "All_species",profile = ARG_S_ab,group = Group)
+attach(All_species_Top_col)
+attach(All_species_col)
+
+ARG_S_ab_PAtop <- PA_comb_top(pathogen = NewPA_Air$Species,abundance=ARG_S_ab,n=5)
+ARG_PAtop_col <- profile2df_dir(prefix = "ARG_Top",profile = ARG_S_ab_PAtop,group = Group)
+{
+  design1 <- c("1113
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223")
+}
+{
+  design2 <- c("11134
+                22234
+                22234
+                22234
+                22234
+                22234
+                22234
+                22234
+                22234
+                22234
+                22234
+                22234
+                22234
+                22234
+                22234
+                22234
+                22234
+                22234
+                22234
+                22234
+                22234
+                22234")
+}
+
+{
+  design_main <- c("1134
+                    2234
+                    2234
+                    2234
+                    2234
+                    2234
+                    2234
+                    2234
+                    2234
+                    2234
+                    2234
+                    2234
+                    2234
+                    2234
+                    2234
+                    2234
+                    2234
+                    2234
+                    2234
+                    2234
+                    2234
+                    2234")
+}
+
+{
+  design_main2 <- c(" AACD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     BBCD
+                     EEGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     FFGH
+                     IIKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                     JJKL
+                ")
+}
+{
+  design_main2 <- c(" AACD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      EEEE
+                      EEEE
+                      EEEE
+                      FFHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      JJJJ
+                      JJJJ
+                      JJJJ
+                      KKMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      OOOO
+                      OOOO
+                      OOOO
+                ")
+}
+{
+  design_final_old <- c("1113
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                2223
+                4445
+                4445
+                4445
+                4445
+                4445
+                4445
+                4445
+                4445
+                4445
+                4445
+                4445
+                4445
+                4445
+                4445
+                4445
+                4445
+                4445
+                4445
+                4445
+                4445
+                4445
+                6667
+                6667
+                6667
+                6667
+                6667
+                6667
+                6667
+                6667
+                6667
+                6667
+                6667
+                6667
+                6667
+                6667
+                6667
+                6667
+                6667
+                6667
+                6667
+                6667
+                6667
+                8889
+                8889
+                8889
+                8889
+                8889
+                8889
+                8889
+                8889
+                8889
+                8889
+                8889
+                8889
+                8889
+                8889
+                8889
+                8889
+                8889
+                8889
+                8889
+                8889
+                8889
+                ")
+}
+{
+  design_final <- c("ACDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     BCDD
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     EFGG
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     HIJJ
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                     KLMM
+                ")
+}
+{
+  design3 <- c("ABCDE")
+}
+
+color_pa10 <- c(
+"#e9e9e9",
+"#8ECFC9",
+"#FFBE7A",
+"#82B0D2",
+"#BEB8DC",
+"#2878b5",
+"#9ac9db",
+"#f8ac8c",
+# "#005755",
+"#FA7F6F",
+"#F5C045"
+)
+
+
+```
+
+# Load - Urine Group
+
+```{r}
+load(file = "02.datasave/06.Clinical_Urine_P.Rdata")
+list2env(Urine_BacAbu, .GlobalEnv)
+list2env(Urine_ARGHost, .GlobalEnv)
+list2env(Urine_ARGType, .GlobalEnv)
+list2env(Urine_MGEHost, .GlobalEnv)
+list2env(Urine_MGEType, .GlobalEnv)
+list2env(Urine_MRGHost, .GlobalEnv)
+list2env(Urine_MRGType, .GlobalEnv)
+list2env(Urine_VFHost, .GlobalEnv)
+list2env(Urine_VFType, .GlobalEnv)
+list2env(Urine_SGHost, .GlobalEnv)
+list2env(Urine_SGType, .GlobalEnv)
+```
+
+
+
+# Analysis - Urine Functions Load
+```{r}
+Bac_raw_ab <- profile_fread(path="01.rawdata/BP2_HumanUrine/Kraken2/TaxAbu.table",header = T,sep = "\t",quote = "",check.names = F,order = order_urine)
+Bac_raw_ab <- Bac_raw_ab[grep("d__Bacteria", Bac_raw_ab$Taxonomy),]
+
+# Gene data
+# Load functional gene tables
+ARG_sourceraw_ab <- profile_fread(path="01.rawdata/BP2_HumanUrine/results/Tax.ARGs.ppm.txt",header = T,sep = "\t",quote = "",check.names = F,order = order_urine,IDloaction = 4,aggregate = T)
+ARG_typeraw_ab <- profile_fread(path="01.rawdata/BP2_HumanUrine/results/OUT.ARGs.ppm.Subtype.txt",header = T,sep = "\t",quote = "",check.names = F,order = order_urine,IDloaction = 1,aggregate = T)
+MGE_sourceraw_ab <- profile_fread(path="01.rawdata/BP2_HumanUrine/results/Tax.MGEs.ppm.txt",header = T,sep = "\t",quote = "",check.names = F,order = order_urine,IDloaction = 4,aggregate = T)
+MGE_typeraw_ab <- profile_fread(path="01.rawdata/BP2_HumanUrine/results/OUT.MGEs.ppm.Subtype.txt",header = T,sep = "\t",quote = "",check.names = F,order = order_urine,IDloaction = 1,aggregate = T)
+MRG_sourceraw_ab <- profile_fread(path="01.rawdata/BP2_HumanUrine/results/Tax.MRGs.ppm.txt",header = T,sep = "\t",quote = "",check.names = F,order = order_urine,IDloaction = 4,aggregate = T)
+MRG_typeraw_ab <- profile_fread(path="01.rawdata/BP2_HumanUrine/results/OUT.MRGs.ppm.Subtype.txt",header = T,sep = "\t",quote = "",check.names = F,order = order_urine,IDloaction = 1,aggregate = T)
+VF_sourceraw_ab <- profile_fread(path="01.rawdata/BP2_HumanUrine/results/Tax.VFs.ppm.txt",header = T,sep = "\t",quote = "",check.names = F,order = order_urine,IDloaction = 4,aggregate = T)
+VF_typeraw_ab <- profile_fread(path="01.rawdata/BP2_HumanUrine/results/OUT.VFs.ppm.Subtype.txt",header = T,sep = "\t",quote = "",check.names = F,order = order_urine,IDloaction = 1,aggregate = T)
+SG_sourceraw_ab <- profile_fread(path="01.rawdata/BP2_HumanUrine/results/Tax.SGs.ppm.txt",header = T,sep = "\t",quote = "",check.names = F,order = order_urine,IDloaction = 4,aggregate = T)
+SG_typeraw_ab <- profile_fread(path="01.rawdata/BP2_HumanUrine/results/OUT.SGs.ppm.Subtype.txt",header = T,sep = "\t",quote = "",check.names = F,order = order_urine,IDloaction = 1,aggregate = T)
+
+attach(Pangenome_taxref)
+BacTaxList <- Pangenome_taxref
+BacTaxList2 <- Pangenome_taxref;BacTaxList2$SpeciesID <- BacTaxList2$Species
+
+ARGTypeList <- tidyr::separate(data = ARG_typeraw_ab,col = "ID",into = c("Type","Subtype"),sep = "__",remove = F) %>% .[,1:3]; ARGTypeList$Type[ARGTypeList$Type=="macrolide-lincosamide-streptogramin"] <- "MLS"
+
+MGETypeList <- tidyr::separate(data = MGE_typeraw_ab,col = "ID",into = c("Type","Subtype"),sep = "__",remove = F) %>% .[,1:3]
+MRGTypeList <- tidyr::separate(data = MRG_typeraw_ab,col = "ID",into = c("Type","Subtype"),sep = "__",remove = F) %>% .[,1:3]
+VFTypeList  <- tidyr::separate(data = VF_typeraw_ab,col = "ID" ,into = c("Type","Subtype"),sep = "__",remove = F) %>% .[,1:3]
+SGTypeList  <- tidyr::separate(data = SG_typeraw_ab,col = "ID" ,into = c("Type","Subtype"),sep = "__",remove = F) %>% .[,1:3]
+
+# bacteria
+Urine_BacAbu <- object_taxAbundance(prefix="Bac", groupfile=Group_urine, inputtable=Bac_raw_ab,order = order_urine)
+# geneHost&geneType
+Urine_ARGHost <- object_geneHost(prefix = "ARG", groupfile = Group_urine, inputtable = ARG_sourceraw_ab , reftable = BacTaxList , order = order_urine)
+Urine_ARGType <- object_geneType(prefix = "ARG", groupfile = Group_urine, inputtable = ARG_typeraw_ab , reftable = ARGTypeList , order = order_urine)
+Urine_MGEHost <- object_geneHost(prefix = "MGE", groupfile = Group_urine, inputtable = MGE_sourceraw_ab , reftable = BacTaxList , order = order_urine)
+Urine_MGEType <- object_geneType(prefix = "MGE", groupfile = Group_urine, inputtable = MGE_typeraw_ab , reftable = MGETypeList , order = order_urine)
+Urine_MRGHost <- object_geneHost(prefix = "MRG", groupfile = Group_urine, inputtable = MRG_sourceraw_ab , reftable = BacTaxList , order = order_urine)
+Urine_MRGType <- object_geneType(prefix = "MRG", groupfile = Group_urine, inputtable = MRG_typeraw_ab , reftable = MRGTypeList , order = order_urine)
+Urine_VFHost <- object_geneHost(prefix = "VF", groupfile = Group_urine, inputtable = VF_sourceraw_ab , reftable = BacTaxList , order = order_urine)
+Urine_VFType <- object_geneType(prefix = "VF", groupfile = Group_urine, inputtable = VF_typeraw_ab , reftable = VFTypeList , order = order_urine)
+Urine_SGHost <- object_geneHost(prefix = "SG", groupfile = Group_urine, inputtable = SG_sourceraw_ab , reftable = BacTaxList , order = order_urine)
+Urine_SGType <- object_geneType(prefix = "SG", groupfile = Group_urine, inputtable = SG_typeraw_ab , reftable = SGTypeList , order = order_urine)
+
+
+list2env(Urine_BacAbu, .GlobalEnv)
+list2env(Urine_ARGHost, .GlobalEnv)
+list2env(Urine_ARGType, .GlobalEnv)
+list2env(Urine_MGEHost, .GlobalEnv)
+list2env(Urine_MGEType, .GlobalEnv)
+list2env(Urine_MRGHost, .GlobalEnv)
+list2env(Urine_MRGType, .GlobalEnv)
+list2env(Urine_VFHost, .GlobalEnv)
+list2env(Urine_VFType, .GlobalEnv)
+list2env(Urine_SGHost, .GlobalEnv)
+list2env(Urine_SGType, .GlobalEnv)
+
+```
+
+# Analysis - Species Composition
+```{r}
+# Group labels
+zyz_cols <-  color_zyz1
+names(zyz_cols) <-   c("Healthy","Infected")## color mapping reference ##
+Group_urine$ID <- factor(Group_urine$ID,levels = Group_urine$ID)
+p2_urine <- ggplot(Group_urine,aes(x=ID,y=X))+
+  geom_tile(aes(fill=Group))+
+  # scale_fill_manual(values = c("white","#eb6060","#e79164","#6ec1dd","#89c289","#7577d6","#Be87c4"))+
+  scale_y_continuous(expand = c(0,0))+
+  scale_fill_manual(values = zyz_cols)+
+  labs(x="",y="")+
+  theme_jgf()+
+  theme(panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line =element_line(colour = "white"),
+        axis.text = element_blank(),
+        legend.position = "right",
+        legend.title = element_blank())+
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  # theme(legend.position = "bottom")+
+  theme(legend.key.size = unit(.3,'cm'))+theme(panel.margin.x=unit(0.2, "lines"))+
+  guides(fill=guide_legend(nrow =2))+
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  theme(plot.margin = ggplot2::margin())+
+  theme(legend.margin = ggplot2::margin())
+p2_urine
+
+profile2df(prefix = "Bac",profile = Bac_S_re,n = 10,group = Group_urine)
+Bac_col_se <- Rmisc::summarySE(Bac_col, groupvars=c("Group","variable"), measurevar=c("value"))
+Bac_col$Group <- factor(Bac_col$Group,levels = c("Healthy","Infected"))
+
+P1 <- ggplot(Bac_col,aes(x =ID ,y = value,fill=variable))+
+  geom_col()+
+  scale_y_continuous(expand = c(0,0),labels = scales::percent)+
+  scale_x_discrete(expand = c(0,0))+
+  xlab("")+ylab("Relativate abundance")+
+  theme_jgf()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust = 0.5))
+P1%>% insert_top(p2_urine,height = 0.04)
+```
+
+
+# Analysis - Urine Function Tests
+```{r}
+# Original ARG analysis subset
+profile2df(prefix = "ARG",profile = ARG_G_ab,n = 9,group = Group_urine)
+ARG_col_se <- Rmisc::summarySE(ARG_col, groupvars=c("Group","variable"), measurevar=c("value"))
+ARG_host <- ggplot(ARG_col,aes(x =ID ,y = value,fill=variable))+
+  geom_col()+
+  scale_y_continuous(expand = c(0,0))+
+  scale_x_discrete(expand = c(0,0))+
+  scale_fill_d3()+
+  xlab("")+ylab("ARG hosts abundance (ppm)")+
+  theme_jgfbw()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust = 0.5))+
+  theme(legend.key.size = unit(.3,'cm'))+theme(panel.margin.x=unit(0.2, "lines"))+
+  theme(plot.margin = margin())+
+  theme(legend.margin = margin())
+ARG_host%>% insert_top(p2_urine,height = 0.04)
+
+ARG_col_se$Group <- factor(ARG_col_se$Group,levels =c("Healthy","Infected"))
+ARG_host2 <- ggplot(data = ARG_col_se,aes(x=Group,y = value,fill=variable, stratum = variable, alluvium = variable))+
+  geom_col()+
+  geom_flow(alpha = 0.5, width = 0.1) +
+  scale_fill_d3()+
+  xlab("")+ylab("ARG hosts abundance (ppm)")+scale_y_continuous(expand = c(0,0))+
+  theme_jgfbw()+
+  theme(legend.position = "none")
+ARG_host2
+fianl1 <- p2_urine/ARG_host+ARG_host2+ plot_layout(guides = 'collect')+plot_layout(design = design1)
+
+
+
+ARG_S_ab_PAstat <- PA_stat(pathogen = NewPA_Air$Species,abundance = ARG_S_ab)
+ARG_stat_col <- profile2df_dir(prefix = "ARG_stat",profile = ARG_S_ab_PAstat,group = Group_urine)
+ARG_stat_se <- Rmisc::summarySE(ARG_stat_col, groupvars=c("Group","variable"), measurevar=c("value"))
+
+
+
+ARG_host <- ggplot(ARG_stat_col,aes(x =ID ,y = value,fill=variable))+
+  geom_col()+
+  scale_y_continuous(expand = c(0,0))+
+  scale_x_discrete(expand = c(0,0))+
+  scale_fill_d3()+
+  xlab("")+ylab("ARG hosts abundance (ppm)")+
+  theme_jgfbw()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust = 0.5))+
+  theme(legend.key.size = unit(.3,'cm'))+theme(panel.margin.x=unit(0.2, "lines"))+
+  theme(plot.margin = margin())+
+  theme(legend.margin = margin())
+ARG_host%>% insert_top(p2_urine,height = 0.04)
+
+ARG_stat_se$Group <- factor(ARG_stat_se$Group,levels =c("Healthy","Infected"))
+ARG_host2 <- ggplot(data = ARG_stat_se,aes(x=Group,y = value,fill=variable, stratum = variable, alluvium = variable))+
+  geom_col()+
+  geom_flow(alpha = 0.5, width = 0.1) +
+  scale_fill_d3()+
+  xlab("")+ylab("ARG hosts abundance (ppm)")+scale_y_continuous(expand = c(0,0))+
+  theme_jgfbw()+
+  theme(legend.position = "none")
+ARG_host2
+
+my_comparison= c("Healthy","Infected")
+names(color_zyz1) <- c("Healthy","Infected")
+
+LorMe04::auto_signif_test(valuename = "value",data = ARG_stat_col,treatment_col = 5,value_col = 6 )
+
+ARG_stat_col$Group <- factor(ARG_stat_col$Group,levels =   c("Healthy","Infected"))
+ARG_PA_compare <-ARG_stat_col %>% 
+  ggplot(.,aes(x=fct_reorder(variable,value),y=value,color=Group))+
+  geom_boxplot(aes(color=Group),width=0.5,alpha=0.6,outlier.shape=NA,show.legend = F,size=0.2)+
+  geom_point(position = position_jitterdodge(),alpha=0.6,size=0.8,show.legend = F)+
+  theme_jgfbw()+
+  scale_x_discrete(position = "top")+
+  scale_y_continuous(n.breaks = 3)+
+  scale_color_manual(values = color_zyz1)+
+  stat_compare_means(method = "wilcox.test",
+  # stat_compare_means(method = "wilcox.test",
+                  label = "p.signif",vjust = .9,
+                   hide.ns = TRUE,show.legend = F) +
+  theme(legend.position = "none")+
+  coord_flip()+
+  xlab("")+ylab("Pathogens top5 host ")+
+  # labs(subtitle = "ARG host ppm abundance")+
+  theme(plot.margin = margin(t = 0, r = 10, b = 0, l = 10, unit = "pt"))
+ARG_PA_compare
+fianl1 <- p2_urine/ARG_host+ARG_host2+ARG_PA_compare+ plot_layout(guides = 'collect')+plot_layout(design = design2)
+
+
+
+# Analysis - Batch Functions
+
+plot_Gene_funciton_Stat <- function(prefix,profile,pathogen=NewPA_Air$Species,group_plot=p2_urine,group,groupvars=c("Group","variable"),measurevar=c("value"),levels_group=c("Healthy","Infected"),xlab1="",ylab1="ARG hosts abundance (ppm)",xlab2="",ylab2="",title="ARG",design=design2){
+  names(color_zyz2) <- c("Pathogen","NonPathogen")
+  names(color_zyz1) <- levels_group
+  df_col <- PA_stat(pathogen = pathogen,abundance = profile) %>% profile2df_dir(prefix = prefix,profile = .,group = group)
+  df_col_se <- Rmisc::summarySE(df_col, groupvars=groupvars, measurevar=measurevar)
+  df_bar <- ggplot(df_col,aes(x =ID ,y = value,fill=variable))+
+    geom_col(show.legend = F)+
+    facet_wrap(~Group,nrow = 1,strip.position = "bottom",scales = "free_x")+
+    scale_y_continuous(expand = c(0,0))+
+    scale_x_discrete(expand = c(0,0))+
+    scale_fill_manual(values = color_zyz2)+
+    xlab(xlab1)+ylab(ylab1)+
+    theme_jgf()+
+    
+    theme(strip.background = element_blank())+  # remove facet strip background
+    theme(panel.margin.x=unit(0.8, "lines"))+   # set facet spacing
+    
+    theme(axis.title.x=element_blank(), axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+    theme(legend.key.size = unit(.3,'cm'))+theme(panel.margin.x=unit(0.2, "lines"))+
+    theme(plot.margin = margin())+
+    theme(legend.margin = margin())+
+    theme(legend.position = "none")
+
+  df_col_se$Group <- factor(df_col_se$Group,levels = levels_group)
+  df_bar2 <- ggplot(data = df_col_se,aes(x=Group,y = value,fill=variable, stratum = variable, alluvium = variable))+
+    geom_col()+
+    geom_flow(alpha = 0.5, width = 0.1) +
+    scale_fill_manual(values = color_zyz2)+
+    xlab(xlab1)+ylab(ylab1)+scale_y_continuous(expand = c(0,0))+
+    theme_jgfbw()+
+    theme(legend.key.size = unit(.3,'cm'))+theme(panel.margin.x=unit(0.2, "lines"))+
+    # theme(plot.margin = margin())+
+    theme(legend.margin = margin())
+  
+  my_comparison= levels_group
+  df_col$Group <- factor(df_col$Group ,levels = rev(levels_group))
+  Gene_Stat_compare <- df_col%>% 
+    ggplot(.,aes(x=fct_reorder(variable,value),y=value,color=Group))+
+    geom_boxplot(aes(color=Group),width=0.5,alpha=0.6,outlier.shape=NA,show.legend = F,size=0.2)+
+    geom_point(position = position_jitterdodge(),alpha=0.6,size=0.8,show.legend = F)+
+    theme_jgfbw()+
+    scale_x_discrete(position = "top")+
+    scale_y_continuous(n.breaks = 3)+
+    scale_color_manual(values = color_zyz1)+
+    stat_compare_means(method = "wilcox.test",
+                    label = "p.signif",vjust = .9,
+                     hide.ns = TRUE,show.legend = F) +
+    theme(legend.position = "none")+
+    coord_flip()+
+    xlab(xlab2)+ylab(ylab2)+
+    # labs(subtitle = "ARG host ppm abundance")+
+    theme(plot.margin = margin(t = 0, r = 10, b = 0, l = 10, unit = "pt"))
+  Gene_Stat_compare
+  
+  
+  final1 <- group_plot/df_bar+df_bar2+Gene_Stat_compare+ plot_layout(guides = 'collect')+plot_layout(design = design)
+  plotname <- paste0(title,"_ST")
+  plotname1 <- paste0(title,"_ST1")
+  plotname2 <- paste0(title,"_ST2")
+  plotname3 <- paste0(title,"_ST3")
+  filename <- paste0("03.fig/fig5/S_",title,"_ST.pdf")
+  assign(plotname,final1,envir=.GlobalEnv)
+  assign(plotname1,df_bar,envir=.GlobalEnv)
+  assign(plotname2,df_bar2,envir=.GlobalEnv)
+  assign(plotname3,Gene_Stat_compare,envir=.GlobalEnv)
+  # ggsave(filename,width = 8,height = 3)
+  cat("##################3.plot#####################\n")
+  cat("Please check the plot1 of",plotname1,"\n")
+  cat("Please check the plot2 of",plotname2,"\n")
+  cat("Please check the plot3 of",plotname3,"\n")
+  cat("Please check the plot_final of",plotname,"\n")
+  
+}
+
+
+plot_Gene_funciton <- function(prefix,profile,n,group_plot=p2_urine,group,groupvars=c("Group","variable"),measurevar=c("value"),levels_group=c("Healthy","Infected"),xlab1="",ylab1="ARG hosts abundance (ppm)",xlab2="",ylab2="",title="ARG",design=design2){
+  names(color_zyz1) <- levels_group
+  if (nrow(profile)>n) {
+    df_col <- profile2df(prefix = prefix,profile = profile,n = n,group = group)
+  }else{
+    df_col <- profile2df_dir(prefix = prefix,profile = profile,group = group)
+  }
+  
+  df_col_se <- Rmisc::summarySE(df_col, groupvars=groupvars, measurevar=measurevar)
+  df_bar <- ggplot(df_col,aes(x =ID ,y = value,fill=variable))+
+    geom_col(show.legend = F)+
+    facet_wrap(~Group,nrow = 1,strip.position = "bottom",scales = "free_x")+
+    scale_y_continuous(expand = c(0,0))+
+    scale_x_discrete(expand = c(0,0))+
+    scale_fill_d3()+
+    xlab("")+ylab(ylab1)+
+    theme_jgf()+
+    theme(strip.background = element_blank())+  # remove facet strip background
+    theme(panel.margin.x=unit(0.8, "lines"))+   # set facet spacing
+    
+    theme(axis.title.x=element_blank(), axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+    theme(legend.key.size = unit(.3,'cm'))+theme(panel.margin.x=unit(0.2, "lines"))+
+    theme(plot.margin = margin())+
+    theme(legend.margin = margin())+
+    theme(legend.position = "none")
+
+  df_col_se$Group <- factor(df_col_se$Group,levels = levels_group)
+  df_bar2 <- ggplot(data = df_col_se,aes(x=Group,y = value,fill=variable, stratum = variable, alluvium = variable))+
+    geom_col()+
+    geom_flow(alpha = 0.5, width = 0.1) +
+    scale_fill_d3()+
+    xlab("")+ylab(ylab1)+scale_y_continuous(expand = c(0,0))+
+    theme_jgfbw()+
+    theme(legend.key.size = unit(.3,'cm'))+theme(panel.margin.x=unit(0.2, "lines"))+
+    # theme(plot.margin = margin())+
+    theme(legend.margin = margin())
+  
+  df_col$Group <- factor(df_col$Group ,levels = rev(levels_group))
+  my_comparison= levels_group
+  Gene_col_compare <- df_col%>% 
+    ggplot(.,aes(x=fct_reorder(variable,value),y=value,color=Group))+
+    geom_boxplot(aes(color=Group),width=0.5,alpha=0.6,outlier.shape=NA,show.legend = F,size=0.2)+
+    geom_point(position = position_jitterdodge(),alpha=0.6,size=0.8,show.legend = F)+
+    theme_jgfbw()+
+    scale_x_discrete(position = "top")+
+    scale_y_continuous(n.breaks = 3)+
+    scale_color_manual(values = color_zyz1)+
+    stat_compare_means(method = "wilcox.test",
+                    label = "p.signif",vjust = .9,
+                     hide.ns = TRUE,show.legend = F) +
+    theme(legend.position = "none")+
+    coord_flip()+
+    xlab(xlab2)+ylab(ylab2)+
+    # labs(subtitle = "ARG host ppm abundance")+
+    theme(plot.margin = margin(t = 0, r = 10, b = 0, l = 10, unit = "pt"))
+  Gene_col_compare
+  
+
+  df_col$Group <- factor(df_col$Group ,levels = rev(levels_group))
+  my_comparison= levels_group
+  Gene_col_compare2 <- df_col%>% 
+    ggplot(.,aes(x=fct_reorder(variable,value),y=value,color=Group))+
+    geom_boxplot(aes(color=Group),width=0.5,alpha=0.6,outlier.shape=NA,show.legend = F,size=0.2)+
+    geom_point(position = position_jitterdodge(),alpha=0.6,size=0.8,show.legend = F)+
+    theme_jgfbw()+
+    scale_x_discrete(position = "top")+
+    scale_color_manual(values = color_zyz1)+
+    stat_compare_means(method = "wilcox.test",
+                    label = "p.signif",vjust = .9,
+                     hide.ns = TRUE,show.legend = F) +
+    theme(legend.position = "none")+
+    coord_flip()+
+    xlab(xlab2)+ylab(ylab2)+
+    # labs(subtitle = "ARG host ppm abundance")+
+    theme(axis.text.y = element_blank())+
+    theme(plot.margin = margin(t = 0, r = 10, b = 0, l = 10, unit = "pt"))
+  Gene_col_compare2
+  
+  
+  final1 <- group_plot/df_bar+df_bar2+Gene_col_compare+ plot_layout(guides = 'collect')+plot_layout(design = design)
+  plotname <- paste0(title,"_S")
+  plotname1 <- paste0(title,"_S1")
+  plotname2 <- paste0(title,"_S2")
+  plotname3 <- paste0(title,"_S3")
+  plotname4 <- paste0(title,"_S4")
+  filename <- paste0("03.fig/fig5/S_",title,"_S.pdf")
+  assign(plotname,final1,envir=.GlobalEnv)
+  assign(plotname1,df_bar,envir=.GlobalEnv)
+  assign(plotname2,df_bar2,envir=.GlobalEnv)
+  assign(plotname3,Gene_col_compare,envir=.GlobalEnv)
+  assign(plotname4,Gene_col_compare2,envir=.GlobalEnv)
+  # ggsave(filename,width = 8,height = 3)
+  cat("##################3.plot#####################\n")
+  cat("Please check the plot1 of",plotname1,"\n")
+  cat("Please check the plot2 of",plotname2,"\n")
+  cat("Please check the plot2 of",plotname3,"\n")
+  cat("Please check the plot_final of",plotname,"\n")
+  
+}
+
+
+plot_Gene_funciton_test <- function(prefix = "ARG",profile = ARG_S_ab,group,xlab1="",ylab1="ARG hosts abundance (ppm)",levels_group=c("Healthy","Infected"),title="ARG_host_urine"){
+  sum <- colSums(profile[,-1]) %>% as.data.frame() %>% rownames_zyz(.,cbindrowname = T)
+  colnames(sum) <- c("ID","value")
+  sum2 <- left_join(sum,group)
+  sum2$Group <- factor(sum2$Group ,levels = c(levels_group))
+  my_comparison= levels_group
+  names(color_zyz1) <- levels_group
+  Gene_col_compare <- sum2%>% 
+    ggplot(.,aes(x=Group,y=value,color=Group))+
+    geom_boxplot(aes(color=Group),width=0.3,alpha=0.6,outlier.shape=NA,show.legend = F,size=0.2)+
+    geom_jitter(alpha=0.6,size=0.8,show.legend = F)+
+    theme_jgfbw()+
+    # coord_flip()+
+    # scale_x_discrete(position = "top")+
+    scale_color_manual(values = color_zyz1)+
+    stat_compare_means(label =  "p.signif", label.x = 1.5,show.legend = F,vjust = 0.5)+
+    theme(legend.position = "none")+
+    xlab(xlab1)+ylab(ylab1)+
+    # labs(subtitle = "ARG host ppm abundance")+
+    theme(plot.margin = margin(t = 0, r = 5, b = 0, l = 5, unit = "pt"))
+  Gene_col_compare
+  plotname <- paste0(title,"_compare")
+  assign(plotname,Gene_col_compare,envir=.GlobalEnv)
+  cat("##################3.plot#####################\n")
+  cat("Please check the plot1 of",plotname,"\n")
+}
+```
+
+# Analysis - Urine ARG Types/Hosts/Pathogens
+```{r}
+# --- ARG overall analysis ---
+plot_Gene_funciton_test(prefix = "ARG",profile = ARG_type_ab,group = Group_urine,xlab1="Total ARGs",ylab1="ARGs abundance (ppm)",title="ARG_copmare_urine",levels_group=c("Healthy","Infected"))
+plot_Gene_funciton_test(prefix = "MGE",profile = MGE_type_ab,group = Group_urine,xlab1="Total MGEs",ylab1="MGEs abundance (ppm)",title="MGE_copmare_urine",levels_group=c("Healthy","Infected"))
+plot_Gene_funciton_test(prefix = "MRG",profile = MRG_type_ab,group = Group_urine,xlab1="Total MRGs",ylab1="MRGs abundance (ppm)",title="MRG_copmare_urine",levels_group=c("Healthy","Infected"))
+plot_Gene_funciton_test(prefix = "VF",profile = VF_type_ab,group = Group_urine,xlab1="Total VFs",ylab1="VFs abundance (ppm)",title="VF_copmare_urine",levels_group=c("Healthy","Infected"))
+plot_Gene_funciton_test(prefix = "SG",profile = SG_type_ab,group = Group_urine,xlab1="Total SGs",ylab1="SGs abundance (ppm)",title="SG_copmare_urine",levels_group=c("Healthy","Infected"))
+
+ARG_PAstat_sel <- ARG_PAstat_ab %>% filter(ID=="Pathogen")
+MGE_PAstat_sel <- MGE_PAstat_ab %>% filter(ID=="Pathogen")
+MRG_PAstat_sel <- MRG_PAstat_ab %>% filter(ID=="Pathogen")
+VF_PAstat_sel <- VF_PAstat_ab %>% filter(ID=="Pathogen")
+SG_PAstat_sel <- SG_PAstat_ab %>% filter(ID=="Pathogen")
+
+plot_Gene_funciton_test(prefix = "ARG",profile = ARG_PAstat_sel,group = Group_urine,xlab1="Total ARGs",ylab1="Pathogen ARGs abundance (ppm)",title="ARG_copmare_urine_PA",levels_group=c("Healthy","Infected"))
+plot_Gene_funciton_test(prefix = "MGE",profile = MGE_PAstat_sel,group = Group_urine,xlab1="Total MGEs",ylab1="Pathogen MGEs abundance (ppm)",title="MGE_copmare_urine_PA",levels_group=c("Healthy","Infected"))
+plot_Gene_funciton_test(prefix = "MRG",profile = MRG_PAstat_sel,group = Group_urine,xlab1="Total MRGs",ylab1="Pathogen MRGs abundance (ppm)",title="MRG_copmare_urine_PA",levels_group=c("Healthy","Infected"))
+plot_Gene_funciton_test(prefix = "VF",profile = VF_PAstat_sel,group = Group_urine,xlab1="Total VFs",ylab1="Pathogen VFs abundance (ppm)",title="VF_copmare_urine_PA",levels_group=c("Healthy","Infected"))
+plot_Gene_funciton_test(prefix = "SG",profile = SG_PAstat_sel,group = Group_urine,xlab1="Total SGs",ylab1="Pathogen SGs abundance (ppm)",title="SG_copmare_urine_PA",levels_group=c("Healthy","Infected"))
+
+
+
+ARG_copmare_urine_compare+MGE_copmare_urine_compare+MRG_copmare_urine_compare+VF_copmare_urine_compare+SG_copmare_urine_compare+
+  plot_layout(guides = 'collect',design = design3)+
+  plot_annotation(tag_levels = "a")&
+  theme(plot.title = element_text(face = "bold"),plot.tag = element_text(face = "bold"))&
+  theme(legend.position='bottom')&
+  xlab("")
+ggsave("03.figureUP/S_urine_test.pdf",width = 12,height = 3)
+
+# --- ARG types/host/pathogen analysis ---
+plot_Gene_funciton(prefix = "ARG_types_urine",profile = ARG_type_ab,n = 9,group = Group_urine,xlab1="",ylab1="ARG types (ppm)",xlab2 = "",ylab2 ="",title="ARG_types_urine",design = design2,levels_group=c("Healthy","Infected"))
+plot_Gene_funciton(prefix = "MGE_types_urine",profile = MGE_type_ab,n = 9,group = Group_urine,xlab1="",ylab1="MGE types (ppm)",xlab2 = "",ylab2 ="",title="MGE_types_urine",design = design2,levels_group=c("Healthy","Infected"))
+plot_Gene_funciton(prefix = "MRG_types_urine",profile = MRG_type_ab,n = 9,group = Group_urine,xlab1="",ylab1="MRG types (ppm)",xlab2 = "",ylab2 ="",title="MRG_types_urine",design = design2,levels_group=c("Healthy","Infected"))
+plot_Gene_funciton(prefix = "VF_types_urine",profile = VF_type_ab,n = 9,group = Group_urine,xlab1="",ylab1="VF types (ppm)",xlab2 = "",ylab2 ="",title="VF_types_urine",design = design2,levels_group=c("Healthy","Infected"))
+plot_Gene_funciton(prefix = "SG_types_urine",profile = SG_type_ab,n = 9,group = Group_urine,xlab1="",ylab1="SG types (ppm)",xlab2 = "",ylab2 ="",title="SG_types_urine",design = design2,levels_group=c("Healthy","Infected"))
+
+
+plot_Gene_funciton(prefix = "ARG_hosts_urine",profile = ARG_G_ab,n = 9,group = Group_urine,xlab1="",ylab1="ARG hosts (ppm)",xlab2 = "",ylab2 ="",title="ARG_hosts_urine",design = design2,levels_group=c("Healthy","Infected"))
+plot_Gene_funciton(prefix = "MGE_hosts_urine",profile = MGE_G_ab,n = 9,group = Group_urine,xlab1="",ylab1="MGE hosts (ppm)",xlab2 = "",ylab2 ="",title="MGE_hosts_urine",design = design2,levels_group=c("Healthy","Infected"))
+plot_Gene_funciton(prefix = "MRG_hosts_urine",profile = MRG_G_ab,n = 9,group = Group_urine,xlab1="",ylab1="MRG hosts (ppm)",xlab2 = "",ylab2 ="",title="MRG_hosts_urine",design = design2,levels_group=c("Healthy","Infected"))
+plot_Gene_funciton(prefix = "VF_hosts_urine",profile = VF_G_ab,n = 9,group = Group_urine,xlab1="",ylab1="VF hosts (ppm)",xlab2 = "",ylab2 ="",title="VF_hosts_urine",design = design2,levels_group=c("Healthy","Infected"))
+plot_Gene_funciton(prefix = "SG_hosts_urine",profile = VF_G_ab,n = 9,group = Group_urine,xlab1="",ylab1="SG hosts (ppm)",xlab2 = "",ylab2 ="",title="SG_hosts_urine",design = design2,levels_group=c("Healthy","Infected"))
+
+
+plot_Gene_funciton_Stat(prefix = "ARG_PA_urine",profile = ARG_S_ab,group = Group_urine,xlab1="",ylab1="ARG hosts (ppm)",xlab2 = "",ylab2 ="",title="ARG_PA_urine",design = design2,levels_group=c("Healthy","Infected"))
+plot_Gene_funciton_Stat(prefix = "MGE_PA_urine",profile = MGE_S_ab,group = Group_urine,xlab1="",ylab1="MGE hosts (ppm)",xlab2 = "",ylab2 ="",title="MGE_PA_urine",design = design2,levels_group=c("Healthy","Infected"))
+plot_Gene_funciton_Stat(prefix = "MRG_PA_urine",profile = MRG_S_ab,group = Group_urine,xlab1="",ylab1="MRG hosts (ppm)",xlab2 = "",ylab2 ="",title="MRG_PA_urine",design = design2,levels_group=c("Healthy","Infected"))
+plot_Gene_funciton_Stat(prefix = "VF_PA_urine",profile = VF_S_ab,group = Group_urine,xlab1="",ylab1="VF hosts (ppm)",xlab2 = "",ylab2 ="",title="VF_PA_urine",design = design2,levels_group=c("Healthy","Infected"))
+plot_Gene_funciton_Stat(prefix = "SG_PA_urine",profile = SG_S_ab,group = Group_urine,xlab1="",ylab1="SG hosts (ppm)",xlab2 = "",ylab2 ="",title="SG_PA_urine",design = design2,levels_group=c("Healthy","Infected"))
+
+
+
+plot_label <- 
+c(
+"a","","","f","","","k","","",
+"b","","","g","","","l","","",
+"c","","","h","","","m","","",
+"d","","","i","","","n","","",
+"e","","","j","","","o","","")
+
+final <-
+ARG_types_urine_S1+ARG_types_urine_S2+ARG_types_urine_S3+ ARG_hosts_urine_S1+ARG_hosts_urine_S2+ARG_hosts_urine_S3+ ARG_PA_urine_ST1+ARG_PA_urine_ST2+ARG_PA_urine_ST3+
+MGE_types_urine_S1+MGE_types_urine_S2+MGE_types_urine_S3+ MGE_hosts_urine_S1+MGE_hosts_urine_S2+MGE_hosts_urine_S3+ MGE_PA_urine_ST1+MGE_PA_urine_ST2+MGE_PA_urine_ST3+
+MRG_types_urine_S1+MRG_types_urine_S2+MRG_types_urine_S3+ MRG_hosts_urine_S1+MRG_hosts_urine_S2+MRG_hosts_urine_S3+ MRG_PA_urine_ST1+MRG_PA_urine_ST2+MRG_PA_urine_ST3+
+VF_types_urine_S1+VF_types_urine_S2+VF_types_urine_S3+    VF_hosts_urine_S1+VF_hosts_urine_S2+VF_hosts_urine_S3+    VF_PA_urine_ST1+VF_PA_urine_ST2+VF_PA_urine_ST3+
+SG_types_urine_S1+SG_types_urine_S2+SG_types_urine_S3+    SG_hosts_urine_S1+SG_hosts_urine_S2+SG_hosts_urine_S3+    SG_PA_urine_ST1+SG_PA_urine_ST2+SG_PA_urine_ST3+
+
+  
+   plot_layout(guides = 'collect',ncol = 9,nrow = 5)+
+   plot_annotation(tag_levels = list(plot_label))&
+   theme(plot.title = element_text(face = "bold"),plot.tag = element_text(face = "bold"))&
+   theme(legend.position='none')
+ggsave("03.figureUP/S_urine_final.pdf",width = 23,height = 12)
+
+
+final_types <- p2_urine+ARG_types_urine_S1+ARG_types_urine_S2+ARG_types_urine_S3+MGE_types_urine_S1+MGE_types_urine_S2+MGE_types_urine_S3+
+  MRG_types_urine_S1+MRG_types_urine_S2+MRG_types_urine_S3+VF_types_urine_S1+VF_types_urine_S2+VF_types_urine_S3+SG_types_urine_S2+SG_types_urine_S3+
+  plot_layout(design = design_final)+
+  plot_layout(guides = 'collect')+
+  plot_annotation(tag_levels = list(c("",'a',"","","b","","","c","","","d","","","e","","")))&
+  theme(plot.title = element_text(face = "bold"),plot.tag = element_text(face = "bold"))
+
+final_hosts <- p2_urine+ARG_hosts_urine_S1+ARG_hosts_urine_S2+ARG_hosts_urine_S4+MGE_hosts_urine_S1+MGE_hosts_urine_S2+MGE_hosts_urine_S4+
+  MRG_hosts_urine_S1+MRG_hosts_urine_S2+MRG_hosts_urine_S4+VF_hosts_urine_S1+VF_hosts_urine_S2+VF_hosts_urine_S4+SG_hosts_urine_S2+SG_hosts_urine_S4+
+  plot_layout(design = design_final)+
+  plot_layout(guides = 'collect')+
+  plot_annotation(tag_levels = list(c("",'a',"","","b","","","c","","","d","","","e","","")))&
+  theme(plot.title = element_text(face = "bold"),plot.tag = element_text(face = "bold"))
+
+final_PA <- p2_urine+ARG_PA_urine_ST1+ARG_PA_urine_ST2+ARG_PA_urine_ST3+MGE_PA_urine_ST1+MGE_PA_urine_ST2+MGE_PA_urine_ST3+
+  MRG_PA_urine_ST1+MRG_PA_urine_ST2+MRG_PA_urine_ST3+VF_PA_urine_ST1+VF_PA_urine_ST2+VF_PA_urine_ST3+SG_PA_urine_ST2+SG_PA_urine_ST3+
+  plot_layout(design = design_final)+
+  plot_layout(guides = 'collect')+
+  plot_annotation(tag_levels = list(c("",'a',"","","b","","","c","","","d","","","e","","")))&
+  theme(plot.title = element_text(face = "bold"),plot.tag = element_text(face = "bold"))
+
+leg_types <- get_legend(final_types) %>% as.ggplot()
+leg_hosts <- get_legend(final_hosts) %>% as.ggplot()
+leg_PA <- get_legend(final_PA) %>% as.ggplot()
+
+leg_types+leg_hosts+leg_PA
+ggsave("03.figureUP/S_urine_legend.pdf",width = 6,height = 9)
+
+
+
+# --- Pathogen composition and ARG analysis ---
+# ARG pathogen analysis (original)
+# Extract pathogen abundance
+Bac_S_re_PAtop <- PA_comb_top(pathogen = NewPA_Air$Species,abundance=Bac_S_re,n=10)
+Bac_Top_col <- profile2df_dir(prefix = "Bac_Top",profile = Bac_S_re_PAtop,group = Group_urine)
+speciesID <- unique(Bac_Top_col$variable)
+speciesID2 <- speciesID[-c(length(speciesID))] %>% as.character()
+length_color <- length(Bac_S_re_PAtop$ID)
+## color mapping reference ##
+color_pa10_sel <- color_pa10[1:length_color]
+names(color_pa10_sel) <-   c("Rare/None-Pathogens",speciesID2)
+
+Bac_pa_host <- ggplot(Bac_Top_col,aes(x =ID ,y = value,fill=variable))+
+  geom_col()+
+  scale_y_continuous(expand = c(0,0),labels = scales::percent)+
+  scale_x_discrete(expand = c(0,0))+
+  scale_fill_manual(values = color_pa10)+
+  xlab("Pathogens abundance")+ylab("Relativate abundance")+
+  theme_jgf()+
+  theme(legend.position = "bottom")+
+  theme(legend.key.size = unit(.3,'cm'))+theme(panel.margin.x=unit(0.2, "lines"))+
+  guides(fill=guide_legend(nrow =2))+
+  # theme(axis.title.x=element_blank())+
+  theme(axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  theme(plot.margin = margin())+
+  theme(legend.margin = margin())+
+  theme(axis.ticks.length.x = unit(0, "pt"))
+Bac_pa_host
+
+ARG_S_ab_PAtop <- PA_comb_top(pathogen = NewPA_Air$Species,abundance=ARG_S_ab,n=6)
+profile2df_dir(prefix = "ARG_Top",profile = ARG_S_ab_PAtop,group = Group_urine)
+
+my_comparison= c("Healthy","Infected")
+ARG_PA_compare <- ARG_Top_col[which(ARG_Top_col$variable!="Rare/None-Pathogens"),] %>% 
+  ggplot(.,aes(x=fct_reorder(variable,value),y=value,color=Group))+
+  geom_boxplot(aes(color=Group),width=0.5,alpha=0.6,outlier.shape=NA,show.legend = F,size=0.2)+
+  geom_point(position = position_jitterdodge(),alpha=0.6,size=0.8,show.legend = F)+
+  theme_jgfbw()+
+  scale_x_discrete(position = "top")+
+  scale_color_manual(values = color_zyz1)+
+  stat_compare_means(method = "wilcox.test",
+                  label = "p.signif",vjust = .9,
+                   hide.ns = TRUE,show.legend = F) +
+  theme(legend.position = "none")+
+  coord_flip()+
+  xlab("")+ylab("Pathogens top5 host ")+
+  # labs(subtitle = "ARG host ppm abundance")+
+  theme(plot.margin = margin(t = 0, r = 10, b = 0, l = 10, unit = "pt"))
+ARG_PA_compare
+
+
+final1 <- p2_urine/Bac_pa_host +ARG_PA_compare+plot_layout(design = design1)+  plot_layout(guides = "collect") &
+  theme(legend.position='bottom')
+
+plot_Gene_funciton_PA <- function(prefix,Bac_profile,n1=10,Gene_profile,n2=6,group_plot=p2_urine,group,groupvars=c("Group","variable"),measurevar=c("value"),levels_group=c("Healthy","Infected"),xlab1="Pathogens abundance",ylab1="Relativate abundance",xlab2="",ylab2="Pathogens top5 host ",title="ARG",design=design1){
+  names(color_zyz1) <- levels_group
+  # Extract pathogen abundance
+  df_PAtop <- PA_comb_top(pathogen = NewPA_Air$Species,abundance=Bac_profile,n=n1)
+  df_Top_col <- profile2df_dir(prefix = prefix,profile = df_PAtop,group = group)
+  speciesID <- unique(df_Top_col$variable)
+  speciesID2 <- speciesID[-c(length(speciesID))] %>% as.character()
+  
+  
+  length_color <- length(df_PAtop$ID)
+  ## color mapping reference ##
+  color_pa10_sel <- color_pa10[1:length_color]
+  names(color_pa10_sel) <-   c("Rare/None-Pathogens",speciesID2)
+  
+  df_pa_host <- ggplot(df_Top_col,aes(x =ID ,y = value,fill=variable))+
+    geom_col()+
+    scale_y_continuous(expand = c(0,0),labels = scales::percent)+
+    scale_x_discrete(expand = c(0,0))+
+    scale_fill_manual(values = color_pa10_sel)+
+    xlab(xlab1)+ylab(ylab1)+
+    theme_jgf()+
+    theme(legend.position = "bottom")+
+    theme(legend.key.size = unit(.3,'cm'))+theme(panel.margin.x=unit(0.2, "lines"))+
+    guides(fill=guide_legend(nrow =2))+
+    # theme(axis.title.x=element_blank())+
+    theme(axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+    theme(plot.margin = margin())+
+    theme(legend.margin = margin())+
+    theme(axis.ticks.length.x = unit(0, "pt"))
+  df_pa_host
+  
+  Gene_PAtop <- PA_comb_top(pathogen = NewPA_Air$Species,abundance=Gene_profile,n=c(n2+1))
+  Gene_Top_col <- profile2df_dir(prefix = prefix,profile = Gene_PAtop,group = group)
+  
+  my_comparison= levels_group
+  Gene_PA_compare <- Gene_Top_col[which(Gene_Top_col$variable!="Rare/None-Pathogens"),] %>% 
+    ggplot(.,aes(x=fct_reorder(variable,value),y=value,color=Group))+
+    geom_boxplot(aes(color=Group),width=0.5,alpha=0.6,outlier.shape=NA,show.legend = F,size=0.2)+
+    geom_point(position = position_jitterdodge(),alpha=0.6,size=0.8,show.legend = F)+
+    theme_jgfbw()+
+    scale_x_discrete(position = "top")+
+    scale_color_manual(values = color_zyz1)+
+    stat_compare_means(method = "wilcox.test",
+                    label = "p.signif",vjust = .9,
+                     hide.ns = TRUE,show.legend = F) +
+    theme(legend.position = "none")+
+    coord_flip()+
+    xlab(xlab2)+ylab(ylab2)+
+    # labs(subtitle = "ARG host ppm abundance")+
+    theme(plot.margin = margin(t = 0, r = 10, b = 0, l = 10, unit = "pt"))
+  Gene_PA_compare
+  
+  my_comparison= levels_group
+  Gene_PA_compare2 <- Gene_Top_col[which(Gene_Top_col$variable!="Rare/None-Pathogens"),] %>% 
+    ggplot(.,aes(x=fct_reorder(variable,value),y=value,color=Group))+
+    geom_boxplot(aes(color=Group),width=0.5,alpha=0.6,outlier.shape=NA,show.legend = F,size=0.2)+
+    geom_point(position = position_jitterdodge(),alpha=0.6,size=0.8,show.legend = F)+
+    theme_jgfbw()+
+    scale_x_discrete(position = "top")+
+    scale_color_manual(values = color_zyz1)+
+    stat_compare_means(method = "wilcox.test",
+                    label = "p.signif",vjust = .9,
+                     hide.ns = TRUE,show.legend = F) +
+    theme(legend.position = "none")+
+    coord_flip()+
+    xlab(xlab2)+ylab(ylab2)+
+    theme(axis.title.y=element_blank(), axis.text.y=element_blank())+
+    theme(plot.margin = margin(t = 0, r = 10, b = 0, l = 10, unit = "pt"))
+  Gene_PA_compare2
+  
+  
+  final1 <- group_plot/df_pa_host +Gene_PA_compare+plot_layout(design = design)+  plot_layout(guides = "collect") &
+    theme(legend.position='bottom')
+
+  plotname <- paste0(title,"_main")
+  plotname1 <- paste0(title,"_main1")
+  plotname2 <- paste0(title,"_main2")
+  plotname3 <- paste0(title,"_main3")
+  filename <- paste0("03.figureUP/M6_",title,"_main.pdf")
+  assign(plotname,final1,envir=.GlobalEnv)
+  assign(plotname1,df_pa_host,envir=.GlobalEnv)
+  assign(plotname2,Gene_PA_compare,envir=.GlobalEnv)
+  assign(plotname3,Gene_PA_compare2,envir=.GlobalEnv)
+  ggsave(filename,width = 10,height = 3)
+  cat("##################3.plot#####################\n")
+  cat("Please check the plot1 of",plotname1,"\n")
+  cat("Please check the plot2 of",plotname2,"\n")
+  cat("Please check the plot3 of",plotname3,"\n")
+  cat("Please check the plot_final of",plotname,"\n")
+  
+}
+plot_Gene_funciton_PA(prefix = "ARG",Bac_profile = Bac_S_re,n1 = 10,Gene_profile = ARG_S_ab,n2 = 5,group_plot = p2_urine,group = Group_urine,xlab1="Pathogens abundance",ylab1="Relativate abundance",xlab2="",ylab2="Pathogens top5 host ",title="ARG_urine")
+
+```
+
+
+# Load - Infant Antibiotic Group File
+```{r}
+load(file = "02.datasave/06.Clinical_BabyAbx_P.Rdata")
+list2env(Baby_BacAbu, .GlobalEnv)
+list2env(Baby_ARGHost, .GlobalEnv)
+list2env(Baby_ARGType, .GlobalEnv)
+list2env(Baby_MGEHost, .GlobalEnv)
+list2env(Baby_MGEType, .GlobalEnv)
+list2env(Baby_MRGHost, .GlobalEnv)
+list2env(Baby_MRGType, .GlobalEnv)
+list2env(Baby_VFHost, .GlobalEnv)
+list2env(Baby_VFType, .GlobalEnv)
+list2env(Baby_SGHost, .GlobalEnv)
+list2env(Baby_SGType, .GlobalEnv)
+```
+
+
+# Analysis - Species Composition
+```{r}
+# Group labels
+zyz_cols <-  color_zyz1
+names(zyz_cols) <-  c("Healthy","Hospitalization")## color mapping reference ##
+Group_babyAbx$ID <- factor(Group_babyAbx$ID,levels = Group_babyAbx$ID)
+p2_urine <- ggplot(Group_babyAbx,aes(x=ID,y=X))+
+  geom_tile(aes(fill=Group))+
+  # scale_fill_manual(values = c("white","#eb6060","#e79164","#6ec1dd","#89c289","#7577d6","#Be87c4"))+
+  scale_y_continuous(expand = c(0,0))+
+  scale_fill_manual(values = zyz_cols)+
+  labs(x="",y="")+
+  theme_jgf()+
+  theme(panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line =element_line(colour = "white"),
+        axis.text = element_blank(),
+        legend.position = "right",
+        legend.title = element_blank())+
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  # theme(legend.position = "bottom")+
+  theme(legend.key.size = unit(.3,'cm'))+theme(panel.margin.x=unit(0.2, "lines"))+
+  guides(fill=guide_legend(nrow =2))+
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  theme(plot.margin = margin())+
+  theme(legend.margin = margin())
+p2_babyAbx <- p2_urine
+
+profile2df(prefix = "Bac",profile = Bac_S_re,n = 10,group = Group_babyAbx)
+Bac_col_se <- Rmisc::summarySE(Bac_col, groupvars=c("Group","variable"), measurevar=c("value"))
+Bac_col$Group <- factor(Bac_col$Group,levels =c("Healthy","Hospitalization"))
+
+P1 <- ggplot(Bac_col,aes(x =ID ,y = value,fill=variable))+
+  geom_col()+
+  scale_y_continuous(expand = c(0,0),labels = scales::percent)+
+  scale_x_discrete(expand = c(0,0))+
+  xlab("")+ylab("Relativate abundance")+
+  theme_jgf()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust = 0.5))
+P1%>% insert_top(p2_babyAbx,height = 0.04)
+```
+
+# Analysis - Infant Antibiotic ARG Types/Hosts/Pathogens
+```{r}
+# Original ARG analysis data
+# ARG analysis subset
+profile2df(prefix = "ARG",profile = ARG_G_ab,n = 9,group = Group_babyAbx)
+ARG_col_se <- Rmisc::summarySE(ARG_col, groupvars=c("Group","variable"), measurevar=c("value"))
+ARG_host <- ggplot(ARG_col,aes(x =ID ,y = value,fill=variable))+
+  geom_col()+
+  scale_y_continuous(expand = c(0,0))+
+  scale_x_discrete(expand = c(0,0))+
+  scale_fill_d3()+
+  xlab("")+ylab("ARG hosts abundance (ppm)")+
+  theme_jgfbw()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust = 0.5))+
+  theme(legend.key.size = unit(.3,'cm'))+theme(panel.margin.x=unit(0.2, "lines"))+
+  theme(plot.margin = margin())+
+  theme(legend.margin = margin())
+ARG_host%>% insert_top(p2_babyAbx,height = 0.04)
+
+# --- ARG overall analysis ---
+plot_Gene_funciton_test(prefix = "ARG",profile = ARG_type_ab,group = Group_babyAbx,xlab1="Total ARGs",ylab1="ARGs abundance (ppm)",title="ARG_copmare_babyAbx",levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton_test(prefix = "MGE",profile = MGE_type_ab,group = Group_babyAbx,xlab1="Total MGEs",ylab1="MGEs abundance (ppm)",title="MGE_copmare_babyAbx",levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton_test(prefix = "MRG",profile = MRG_type_ab,group = Group_babyAbx,xlab1="Total MRGs",ylab1="MRGs abundance (ppm)",title="MRG_copmare_babyAbx",levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton_test(prefix = "VF",profile = VF_type_ab,group = Group_babyAbx,xlab1="Total VFs" ,ylab1="VFs abundance (ppm)",title="VF_copmare_babyAbx",levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton_test(prefix = "SG",profile = SG_type_ab,group = Group_babyAbx,xlab1="Total SGs" ,ylab1="SGs abundance (ppm)",title="SG_copmare_babyAbx",levels_group=c("Healthy","Hospitalization"))
+
+
+ARG_PAstat_sel <- ARG_PAstat_ab %>% filter(ID=="Pathogen")
+MGE_PAstat_sel <- MGE_PAstat_ab %>% filter(ID=="Pathogen")
+MRG_PAstat_sel <- MRG_PAstat_ab %>% filter(ID=="Pathogen")
+VF_PAstat_sel <- VF_PAstat_ab %>% filter(ID=="Pathogen")
+SG_PAstat_sel <- SG_PAstat_ab %>% filter(ID=="Pathogen")
+
+
+plot_Gene_funciton_test(prefix = "ARG",profile = ARG_PAstat_sel,group = Group_babyAbx,xlab1="Total ARGs",ylab1="Pathogen ARGs abundance (ppm)",title="ARG_copmare_babyAbx_PA",levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton_test(prefix = "MGE",profile = MGE_PAstat_sel,group = Group_babyAbx,xlab1="Total MGEs",ylab1="Pathogen MGEs abundance (ppm)",title="MGE_copmare_babyAbx_PA",levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton_test(prefix = "MRG",profile = MRG_PAstat_sel,group = Group_babyAbx,xlab1="Total MRGs",ylab1="Pathogen MRGs abundance (ppm)",title="MRG_copmare_babyAbx_PA",levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton_test(prefix = "VF",profile = VF_PAstat_sel,group = Group_babyAbx,xlab1="Total VFs",ylab1="Pathogen VFs abundance (ppm)",title="VF_copmare_babyAbx_PA",levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton_test(prefix = "SG",profile = SG_PAstat_sel,group = Group_babyAbx,xlab1="Total SGs",ylab1="Pathogen SGs abundance (ppm)",title="SG_copmare_babyAbx_PA",levels_group=c("Healthy","Hospitalization"))
+
+
+ARG_copmare_babyAbx_compare+MGE_copmare_babyAbx_compare+MRG_copmare_babyAbx_compare+VF_copmare_babyAbx_compare+
+  plot_layout(guides = 'collect',design = design3)+
+  plot_annotation(tag_levels = "a")&
+  theme(plot.title = element_text(face = "bold"),plot.tag = element_text(face = "bold"))&
+  theme(legend.position='bottom')
+ggsave("03.figureUP/S_babyAbx_test.pdf",width = 12,height = 3)
+
+
+# --- ARG types/host/pathogen analysis ---
+plot_Gene_funciton(prefix = "ARG_types_babyAbx",profile = ARG_type_ab,n = 9,group = Group_babyAbx,xlab1="",ylab1="ARG types (ppm)",xlab2 = "",ylab2 ="",title="ARG_types_babyAbx",design = design2,levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton(prefix = "MGE_types_babyAbx",profile = MGE_type_ab,n = 9,group = Group_babyAbx,xlab1="",ylab1="MGE types (ppm)",xlab2 = "",ylab2 ="",title="MGE_types_babyAbx",design = design2,levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton(prefix = "MRG_types_babyAbx",profile = MRG_type_ab,n = 9,group = Group_babyAbx,xlab1="",ylab1="MRG types (ppm)",xlab2 = "",ylab2 ="",title="MRG_types_babyAbx",design = design2,levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton(prefix = "VF_types_babyAbx",profile = VF_type_ab,n = 9,group = Group_babyAbx,xlab1="",ylab1="VF types (ppm)",xlab2 = "",ylab2 ="",title="VF_types_babyAbx",design = design2,levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton(prefix = "SG_types_babyAbx",profile = SG_type_ab,n = 9,group = Group_babyAbx,xlab1="",ylab1="SG types (ppm)",xlab2 = "",ylab2 ="",title="SG_types_babyAbx",design = design2,levels_group=c("Healthy","Hospitalization"))
+
+
+plot_Gene_funciton(prefix = "ARG_hosts_babyAbx",profile = ARG_G_ab,n = 9,group = Group_babyAbx,xlab1="",ylab1="ARG hosts (ppm)",xlab2 = "",ylab2 ="",title="ARG_hosts_babyAbx",design = design2,levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton(prefix = "MGE_hosts_babyAbx",profile = MGE_G_ab,n = 9,group = Group_babyAbx,xlab1="",ylab1="MGE hosts (ppm)",xlab2 = "",ylab2 ="",title="MGE_hosts_babyAbx",design = design2,levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton(prefix = "MRG_hosts_babyAbx",profile = MRG_G_ab,n = 9,group = Group_babyAbx,xlab1="",ylab1="MRG hosts (ppm)",xlab2 = "",ylab2 ="",title="MRG_hosts_babyAbx",design = design2,levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton(prefix = "VF_hosts_babyAbx",profile = VF_G_ab,n = 9,group = Group_babyAbx,xlab1="",ylab1="VF hosts (ppm)",xlab2 = "",ylab2 ="",title="VF_hosts_babyAbx",design = design2,levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton(prefix = "SG_hosts_babyAbx",profile = VF_G_ab,n = 9,group = Group_babyAbx,xlab1="",ylab1="SG hosts (ppm)",xlab2 = "",ylab2 ="",title="SG_hosts_babyAbx",design = design2,levels_group=c("Healthy","Hospitalization"))
+
+
+plot_Gene_funciton_Stat(prefix = "ARG_PA_babyAbx",profile = ARG_S_ab,group = Group_babyAbx,xlab1="",ylab1="ARG hosts (ppm)",xlab2 = "",ylab2 ="",title="ARG_PA_babyAbx",design = design2,levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton_Stat(prefix = "MGE_PA_babyAbx",profile = MGE_S_ab,group = Group_babyAbx,xlab1="",ylab1="MGE hosts (ppm)",xlab2 = "",ylab2 ="",title="MGE_PA_babyAbx",design = design2,levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton_Stat(prefix = "MRG_PA_babyAbx",profile = MRG_S_ab,group = Group_babyAbx,xlab1="",ylab1="MRG hosts (ppm)",xlab2 = "",ylab2 ="",title="MRG_PA_babyAbx",design = design2,levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton_Stat(prefix = "VF_PA_babyAbx",profile = VF_S_ab,group = Group_babyAbx,xlab1="",ylab1="VF hosts (ppm)",xlab2 = "",ylab2 ="",title="VF_PA_babyAbx",design = design2,levels_group=c("Healthy","Hospitalization"))
+plot_Gene_funciton_Stat(prefix = "SG_PA_babyAbx",profile = SG_S_ab,group = Group_babyAbx,xlab1="",ylab1="SG hosts (ppm)",xlab2 = "",ylab2 ="",title="SG_PA_babyAbx",design = design2,levels_group=c("Healthy","Hospitalization"))
+
+
+
+plot_label <- 
+c(
+"a","","","f","","","k","","",
+"b","","","g","","","l","","",
+"c","","","h","","","m","","",
+"d","","","i","","","n","","",
+"e","","","j","","","o","","")
+
+final <-
+ARG_types_babyAbx_S1+ARG_types_babyAbx_S2+ARG_types_babyAbx_S3+ ARG_hosts_babyAbx_S1+ARG_hosts_babyAbx_S2+ARG_hosts_babyAbx_S3+ ARG_PA_babyAbx_ST1+ARG_PA_babyAbx_ST2+ARG_PA_babyAbx_ST3+
+MGE_types_babyAbx_S1+MGE_types_babyAbx_S2+MGE_types_babyAbx_S3+ MGE_hosts_babyAbx_S1+MGE_hosts_babyAbx_S2+MGE_hosts_babyAbx_S3+ MGE_PA_babyAbx_ST1+MGE_PA_babyAbx_ST2+MGE_PA_babyAbx_ST3+
+MRG_types_babyAbx_S1+MRG_types_babyAbx_S2+MRG_types_babyAbx_S3+ MRG_hosts_babyAbx_S1+MRG_hosts_babyAbx_S2+MRG_hosts_babyAbx_S3+ MRG_PA_babyAbx_ST1+MRG_PA_babyAbx_ST2+MRG_PA_babyAbx_ST3+
+VF_types_babyAbx_S1+VF_types_babyAbx_S2+VF_types_babyAbx_S3+    VF_hosts_babyAbx_S1+VF_hosts_babyAbx_S2+VF_hosts_babyAbx_S3+    VF_PA_babyAbx_ST1+VF_PA_babyAbx_ST2+VF_PA_babyAbx_ST3+
+SG_types_babyAbx_S1+SG_types_babyAbx_S2+SG_types_babyAbx_S3+    SG_hosts_babyAbx_S1+SG_hosts_babyAbx_S2+SG_hosts_babyAbx_S3+    SG_PA_babyAbx_ST1+SG_PA_babyAbx_ST2+SG_PA_babyAbx_ST3+
+
+  
+   plot_layout(guides = 'collect',ncol = 9,nrow = 5)+
+   plot_annotation(tag_levels = list(plot_label))&
+   theme(plot.title = element_text(face = "bold"),plot.tag = element_text(face = "bold"))&
+   theme(legend.position='none')
+ggsave("03.figureUP/S_babyAbx_final.pdf",width = 23,height = 12)
+
+
+final_types <- p2_babyAbx+ARG_types_babyAbx_S1+ARG_types_babyAbx_S2+ARG_types_babyAbx_S3+MGE_types_babyAbx_S1+MGE_types_babyAbx_S2+MGE_types_babyAbx_S3+
+  MRG_types_babyAbx_S1+MRG_types_babyAbx_S2+MRG_types_babyAbx_S3+VF_types_babyAbx_S1+VF_types_babyAbx_S2+VF_types_babyAbx_S3+SG_types_babyAbx_S2+SG_types_babyAbx_S3+
+  plot_layout(design = design_final)+
+  plot_layout(guides = 'collect')+
+  plot_annotation(tag_levels = list(c("",'a',"","","b","","","c","","","d","","","e","","")))&
+  theme(plot.title = element_text(face = "bold"),plot.tag = element_text(face = "bold"))
+
+final_hosts <- p2_babyAbx+ARG_hosts_babyAbx_S1+ARG_hosts_babyAbx_S2+ARG_hosts_babyAbx_S4+MGE_hosts_babyAbx_S1+MGE_hosts_babyAbx_S2+MGE_hosts_babyAbx_S4+
+  MRG_hosts_babyAbx_S1+MRG_hosts_babyAbx_S2+MRG_hosts_babyAbx_S4+VF_hosts_babyAbx_S1+VF_hosts_babyAbx_S2+VF_hosts_babyAbx_S4+SG_hosts_babyAbx_S2+SG_hosts_babyAbx_S4+
+  plot_layout(design = design_final)+
+  plot_layout(guides = 'collect')+
+  plot_annotation(tag_levels = list(c("",'a',"","","b","","","c","","","d","","","e","","")))&
+  theme(plot.title = element_text(face = "bold"),plot.tag = element_text(face = "bold"))
+
+final_PA <- p2_babyAbx+ARG_PA_babyAbx_ST1+ARG_PA_babyAbx_ST2+ARG_PA_babyAbx_ST3+MGE_PA_babyAbx_ST1+MGE_PA_babyAbx_ST2+MGE_PA_babyAbx_ST3+
+  MRG_PA_babyAbx_ST1+MRG_PA_babyAbx_ST2+MRG_PA_babyAbx_ST3+VF_PA_babyAbx_ST1+VF_PA_babyAbx_ST2+VF_PA_babyAbx_ST3+SG_PA_babyAbx_ST2+SG_PA_babyAbx_ST3+
+  plot_layout(design = design_final)+
+  plot_layout(guides = 'collect')+
+  plot_annotation(tag_levels = list(c("",'a',"","","b","","","c","","","d","","","e","","")))&
+  theme(plot.title = element_text(face = "bold"),plot.tag = element_text(face = "bold"))
+
+leg_types <- get_legend(final_types) %>% as.ggplot()
+leg_hosts <- get_legend(final_hosts) %>% as.ggplot()
+leg_PA <- get_legend(final_PA) %>% as.ggplot()
+
+leg_types+leg_hosts+leg_PA
+ggsave("03.figureUP/S_babyAbx_legend.pdf",width = 6,height = 9)
+
+
+
+# --- Pathogen composition and ARG analysis ---
+plot_Gene_funciton_PA(prefix = "ARG",Bac_profile = Bac_S_re,n1 = 10,Gene_profile = ARG_S_ab,n2 = 5,group_plot = p2_babyAbx,group = Group_babyAbx,xlab1="Pathogens abundance",ylab1="Relativate abundance",xlab2="",ylab2="Pathogens top5 host ",title="ARG_babyAbx",,levels_group=c("Healthy","Hospitalization"))
+
+```
+
+# Load - Adult Antibiotic Group File
+```{r}
+load(file = "02.datasave/06.Clinical_AdultAbx_P.Rdata")
+list2env(Adult_BacAbu, .GlobalEnv)
+list2env(Adult_ARGHost, .GlobalEnv)
+list2env(Adult_ARGType, .GlobalEnv)
+list2env(Adult_MGEHost, .GlobalEnv)
+list2env(Adult_MGEType, .GlobalEnv)
+list2env(Adult_MRGHost, .GlobalEnv)
+list2env(Adult_MRGType, .GlobalEnv)
+list2env(Adult_VFHost, .GlobalEnv)
+list2env(Adult_VFType, .GlobalEnv)
+list2env(Adult_SGHost, .GlobalEnv)
+list2env(Adult_SGType, .GlobalEnv)
+```
+
+
+
+
+# Analysis - Species Composition
+```{r}
+# Group labels
+zyz_cols <-  c(color_zyz1)
+names(zyz_cols) <-   c("Day0","Day8")## color mapping reference ##
+Group_adultAbx$ID <- factor(Group_adultAbx$ID,levels = Group_adultAbx$ID)
+p2_urine <- ggplot(Group_adultAbx,aes(x=ID,y=X))+
+  geom_tile(aes(fill=Group))+
+  # scale_fill_manual(values = c("white","#eb6060","#e79164","#6ec1dd","#89c289","#7577d6","#Be87c4"))+
+  scale_y_continuous(expand = c(0,0))+
+  scale_fill_manual(values = zyz_cols)+
+  labs(x="",y="")+
+  theme_jgf()+
+  theme(panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line =element_line(colour = "white"),
+        axis.text = element_blank(),
+        legend.position = "right",
+        legend.title = element_blank())+
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  # theme(legend.position = "bottom")+
+  theme(legend.key.size = unit(.3,'cm'))+theme(panel.margin.x=unit(0.2, "lines"))+
+  guides(fill=guide_legend(nrow =2))+
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  theme(plot.margin = margin())+
+  theme(legend.margin = margin())
+p2_adultAbx <- p2_urine
+
+profile2df(prefix = "Bac",profile = Bac_S_re,n = 10,group = Group_adultAbx)
+Bac_col_se <- Rmisc::summarySE(Bac_col, groupvars=c("Group","variable"), measurevar=c("value"))
+Bac_col$Group <- factor(Bac_col$Group,levels = c("Day0","Day8"))
+
+P1 <- ggplot(Bac_col,aes(x =ID ,y = value,fill=variable))+
+  geom_col()+
+  scale_y_continuous(expand = c(0,0),labels = scales::percent)+
+  scale_x_discrete(expand = c(0,0))+
+  xlab("")+ylab("Relativate abundance")+
+  theme_jgf()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust = 0.5))
+P1%>% insert_top(p2_adultAbx,height = 0.04)
+```
+
+# Analysis - Adult Antibiotic ARG Types/Hosts/Pathogens
+```{r}
+# Original ARG analysis data
+# ARG analysis subset
+
+profile2df(prefix = "ARG",profile = ARG_G_ab,n = 9,group = Group_adultAbx)
+ARG_col_se <- Rmisc::summarySE(ARG_col, groupvars=c("Group","variable"), measurevar=c("value"))
+ARG_host <- ggplot(ARG_G_ab_topcol,aes(x =ID ,y = value,fill=variable))+
+  geom_col()+
+  scale_y_continuous(expand = c(0,0))+
+  scale_x_discrete(expand = c(0,0))+
+  scale_fill_d3()+
+  xlab("")+ylab("ARG hosts (ppm)")+
+  theme_jgfbw()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust = 0.5))+
+  theme(legend.key.size = unit(.3,'cm'))+theme(panel.margin.x=unit(0.2, "lines"))+
+  theme(plot.margin = margin())+
+  theme(legend.margin = margin())
+ARG_host%>% insert_top(p2_adultAbx,height = 0.04)
+
+# --- ARG overall analysis ---
+plot_Gene_funciton_test(prefix = "ARG",profile = ARG_type_ab,group = Group_adultAbx,xlab1="Total ARGs",ylab1="ARGs abundance (ppm)",title="ARG_copmare_adultAbx",levels_group=c("Day0","Day8"))
+plot_Gene_funciton_test(prefix = "MGE",profile = MGE_type_ab,group = Group_adultAbx,xlab1="Total MGEs",ylab1="MGEs abundance (ppm)",title="MGE_copmare_adultAbx",levels_group=c("Day0","Day8"))
+plot_Gene_funciton_test(prefix = "MRG",profile = MRG_type_ab,group = Group_adultAbx,xlab1="Total MRGs",ylab1="MRGs abundance (ppm)",title="MRG_copmare_adultAbx",levels_group=c("Day0","Day8"))
+plot_Gene_funciton_test(prefix = "VF",profile = VF_type_ab,group = Group_adultAbx,xlab1="Total VFs" ,ylab1="VFs abundance (ppm)",title="VF_copmare_adultAbx",levels_group=c("Day0","Day8"))
+plot_Gene_funciton_test(prefix = "SG",profile = SG_type_ab,group = Group_adultAbx,xlab1="Total SGs" ,ylab1="SGs abundance (ppm)",title="SG_copmare_adultAbx",levels_group=c("Day0","Day8"))
+
+
+ARG_PAstat_sel <- ARG_PAstat_ab %>% filter(ID=="Pathogen")
+MGE_PAstat_sel <- MGE_PAstat_ab %>% filter(ID=="Pathogen")
+MRG_PAstat_sel <- MRG_PAstat_ab %>% filter(ID=="Pathogen")
+VF_PAstat_sel <- VF_PAstat_ab %>% filter(ID=="Pathogen")
+SG_PAstat_sel <- SG_PAstat_ab %>% filter(ID=="Pathogen")
+
+
+plot_Gene_funciton_test(prefix = "ARG",profile = ARG_PAstat_sel,group = Group_adultAbx,xlab1="Total ARGs",ylab1="Pathogen ARGs abundance (ppm)",title="ARG_copmare_adultAbx_PA",levels_group=c("Day0","Day8"))
+plot_Gene_funciton_test(prefix = "MGE",profile = MGE_PAstat_sel,group = Group_adultAbx,xlab1="Total MGEs",ylab1="Pathogen MGEs abundance (ppm)",title="MGE_copmare_adultAbx_PA",levels_group=c("Day0","Day8"))
+plot_Gene_funciton_test(prefix = "MRG",profile = MRG_PAstat_sel,group = Group_adultAbx,xlab1="Total MRGs",ylab1="Pathogen MRGs abundance (ppm)",title="MRG_copmare_adultAbx_PA",levels_group=c("Day0","Day8"))
+plot_Gene_funciton_test(prefix = "VF",profile = VF_PAstat_sel,group = Group_adultAbx,xlab1="Total VFs",ylab1="Pathogen VFs abundance (ppm)",title="VF_copmare_adultAbx_PA",levels_group=c("Day0","Day8"))
+plot_Gene_funciton_test(prefix = "SG",profile = SG_PAstat_sel,group = Group_adultAbx,xlab1="Total SGs",ylab1="Pathogen SGs abundance (ppm)",title="SG_copmare_adultAbx_PA",levels_group=c("Day0","Day8"))
+
+
+
+ARG_copmare_adultAbx_compare+MGE_copmare_adultAbx_compare+MRG_copmare_adultAbx_compare+VF_copmare_adultAbx_compare+
+  plot_layout(guides = 'collect',design = design3)+
+  plot_annotation(tag_levels = "a")&
+  theme(plot.title = element_text(face = "bold"),plot.tag = element_text(face = "bold"))&
+  theme(legend.position='bottom')
+ggsave("03.figureUP/S_adultAbx_test.pdf",width = 12,height = 3)
+
+# --- ARG types/host/pathogen analysis ---
+plot_Gene_funciton(prefix = "ARG_types_adultAbx",profile = ARG_type_ab,n = 9,group = Group_adultAbx,xlab1="",ylab1="ARG types (ppm)",xlab2 = "",ylab2 ="",title="ARG_types_adultAbx",design = design2,levels_group=c("Day0","Day8"))
+plot_Gene_funciton(prefix = "MGE_types_adultAbx",profile = MGE_type_ab,n = 9,group = Group_adultAbx,xlab1="",ylab1="MGE types (ppm)",xlab2 = "",ylab2 ="",title="MGE_types_adultAbx",design = design2,levels_group=c("Day0","Day8"))
+plot_Gene_funciton(prefix = "MRG_types_adultAbx",profile = MRG_type_ab,n = 9,group = Group_adultAbx,xlab1="",ylab1="MRG types (ppm)",xlab2 = "",ylab2 ="",title="MRG_types_adultAbx",design = design2,levels_group=c("Day0","Day8"))
+plot_Gene_funciton(prefix = "VF_types_adultAbx",profile = VF_type_ab,n = 9,group = Group_adultAbx,xlab1="",ylab1="VF types (ppm)",xlab2 = "",ylab2 ="",title="VF_types_adultAbx",design = design2,levels_group=c("Day0","Day8"))
+plot_Gene_funciton(prefix = "SG_types_adultAbx",profile = SG_type_ab,n = 9,group = Group_adultAbx,xlab1="",ylab1="SG types (ppm)",xlab2 = "",ylab2 ="",title="SG_types_adultAbx",design = design2,levels_group=c("Day0","Day8"))
+
+
+plot_Gene_funciton(prefix = "ARG_hosts_adultAbx",profile = ARG_G_ab,n = 9,group = Group_adultAbx,xlab1="",ylab1="ARG hosts (ppm)",xlab2 = "",ylab2 ="",title="ARG_hosts_adultAbx",design = design2,levels_group=c("Day0","Day8"))
+plot_Gene_funciton(prefix = "MGE_hosts_adultAbx",profile = MGE_G_ab,n = 9,group = Group_adultAbx,xlab1="",ylab1="MGE hosts (ppm)",xlab2 = "",ylab2 ="",title="MGE_hosts_adultAbx",design = design2,levels_group=c("Day0","Day8"))
+plot_Gene_funciton(prefix = "MRG_hosts_adultAbx",profile = MRG_G_ab,n = 9,group = Group_adultAbx,xlab1="",ylab1="MRG hosts (ppm)",xlab2 = "",ylab2 ="",title="MRG_hosts_adultAbx",design = design2,levels_group=c("Day0","Day8"))
+plot_Gene_funciton(prefix = "VF_hosts_adultAbx",profile = VF_G_ab,n = 9,group = Group_adultAbx,xlab1="",ylab1="VF hosts (ppm)",xlab2 = "",ylab2 ="",title="VF_hosts_adultAbx",design = design2,levels_group=c("Day0","Day8"))
+plot_Gene_funciton(prefix = "SG_hosts_adultAbx",profile = VF_G_ab,n = 9,group = Group_adultAbx,xlab1="",ylab1="SG hosts (ppm)",xlab2 = "",ylab2 ="",title="SG_hosts_adultAbx",design = design2,levels_group=c("Day0","Day8"))
+
+
+plot_Gene_funciton_Stat(prefix = "ARG_PA_adultAbx",profile = ARG_S_ab,group = Group_adultAbx,xlab1="",ylab1="ARG hosts (ppm)",xlab2 = "",ylab2 ="",title="ARG_PA_adultAbx",design = design2,levels_group=c("Day0","Day8"))
+plot_Gene_funciton_Stat(prefix = "MGE_PA_adultAbx",profile = MGE_S_ab,group = Group_adultAbx,xlab1="",ylab1="MGE hosts (ppm)",xlab2 = "",ylab2 ="",title="MGE_PA_adultAbx",design = design2,levels_group=c("Day0","Day8"))
+plot_Gene_funciton_Stat(prefix = "MRG_PA_adultAbx",profile = MRG_S_ab,group = Group_adultAbx,xlab1="",ylab1="MRG hosts (ppm)",xlab2 = "",ylab2 ="",title="MRG_PA_adultAbx",design = design2,levels_group=c("Day0","Day8"))
+plot_Gene_funciton_Stat(prefix = "VF_PA_adultAbx",profile = VF_S_ab,group = Group_adultAbx,xlab1="",ylab1="VF hosts (ppm)",xlab2 = "",ylab2 ="",title="VF_PA_adultAbx",design = design2,levels_group=c("Day0","Day8"))
+plot_Gene_funciton_Stat(prefix = "SG_PA_adultAbx",profile = SG_S_ab,group = Group_adultAbx,xlab1="",ylab1="SG hosts (ppm)",xlab2 = "",ylab2 ="",title="SG_PA_adultAbx",design = design2,levels_group=c("Day0","Day8"))
+
+
+
+plot_label <- 
+c(
+"a","","","f","","","k","","",
+"b","","","g","","","l","","",
+"c","","","h","","","m","","",
+"d","","","i","","","n","","",
+"e","","","j","","","o","","")
+
+final <-
+ARG_types_adultAbx_S1+ARG_types_adultAbx_S2+ARG_types_adultAbx_S3+ ARG_hosts_adultAbx_S1+ARG_hosts_adultAbx_S2+ARG_hosts_adultAbx_S3+ ARG_PA_adultAbx_ST1+ARG_PA_adultAbx_ST2+ARG_PA_adultAbx_ST3+
+MGE_types_adultAbx_S1+MGE_types_adultAbx_S2+MGE_types_adultAbx_S3+ MGE_hosts_adultAbx_S1+MGE_hosts_adultAbx_S2+MGE_hosts_adultAbx_S3+ MGE_PA_adultAbx_ST1+MGE_PA_adultAbx_ST2+MGE_PA_adultAbx_ST3+
+MRG_types_adultAbx_S1+MRG_types_adultAbx_S2+MRG_types_adultAbx_S3+ MRG_hosts_adultAbx_S1+MRG_hosts_adultAbx_S2+MRG_hosts_adultAbx_S3+ MRG_PA_adultAbx_ST1+MRG_PA_adultAbx_ST2+MRG_PA_adultAbx_ST3+
+VF_types_adultAbx_S1+VF_types_adultAbx_S2+VF_types_adultAbx_S3+    VF_hosts_adultAbx_S1+VF_hosts_adultAbx_S2+VF_hosts_adultAbx_S3+    VF_PA_adultAbx_ST1+VF_PA_adultAbx_ST2+VF_PA_adultAbx_ST3+
+SG_types_adultAbx_S1+SG_types_adultAbx_S2+SG_types_adultAbx_S3+    SG_hosts_adultAbx_S1+SG_hosts_adultAbx_S2+SG_hosts_adultAbx_S3+    SG_PA_adultAbx_ST1+SG_PA_adultAbx_ST2+SG_PA_adultAbx_ST3+
+
+  
+   plot_layout(guides = 'collect',ncol = 9,nrow = 5)+
+   plot_annotation(tag_levels = list(plot_label))&
+   theme(plot.title = element_text(face = "bold"),plot.tag = element_text(face = "bold"))&
+   theme(legend.position='none')
+ggsave("03.figureUP/S_adultAbx_final.pdf",width = 23,height = 12)
+
+
+final_types <- p2_adultAbx+ARG_types_adultAbx_S1+ARG_types_adultAbx_S2+ARG_types_adultAbx_S3+MGE_types_adultAbx_S1+MGE_types_adultAbx_S2+MGE_types_adultAbx_S3+
+  MRG_types_adultAbx_S1+MRG_types_adultAbx_S2+MRG_types_adultAbx_S3+VF_types_adultAbx_S1+VF_types_adultAbx_S2+VF_types_adultAbx_S3+SG_types_adultAbx_S2+SG_types_adultAbx_S3+
+  plot_layout(design = design_final)+
+  plot_layout(guides = 'collect')+
+  plot_annotation(tag_levels = list(c("",'a',"","","b","","","c","","","d","","","e","","")))&
+  theme(plot.title = element_text(face = "bold"),plot.tag = element_text(face = "bold"))
+
+final_hosts <- p2_adultAbx+ARG_hosts_adultAbx_S1+ARG_hosts_adultAbx_S2+ARG_hosts_adultAbx_S4+MGE_hosts_adultAbx_S1+MGE_hosts_adultAbx_S2+MGE_hosts_adultAbx_S4+
+  MRG_hosts_adultAbx_S1+MRG_hosts_adultAbx_S2+MRG_hosts_adultAbx_S4+VF_hosts_adultAbx_S1+VF_hosts_adultAbx_S2+VF_hosts_adultAbx_S4+SG_hosts_adultAbx_S2+SG_hosts_adultAbx_S4+
+  plot_layout(design = design_final)+
+  plot_layout(guides = 'collect')+
+  plot_annotation(tag_levels = list(c("",'a',"","","b","","","c","","","d","","","e","","")))&
+  theme(plot.title = element_text(face = "bold"),plot.tag = element_text(face = "bold"))
+
+final_PA <- p2_adultAbx+ARG_PA_adultAbx_ST1+ARG_PA_adultAbx_ST2+ARG_PA_adultAbx_ST3+MGE_PA_adultAbx_ST1+MGE_PA_adultAbx_ST2+MGE_PA_adultAbx_ST3+
+  MRG_PA_adultAbx_ST1+MRG_PA_adultAbx_ST2+MRG_PA_adultAbx_ST3+VF_PA_adultAbx_ST1+VF_PA_adultAbx_ST2+VF_PA_adultAbx_ST3+SG_PA_adultAbx_ST2+SG_PA_adultAbx_ST3+
+  plot_layout(design = design_final)+
+  plot_layout(guides = 'collect')+
+  plot_annotation(tag_levels = list(c("",'a',"","","b","","","c","","","d","","","e","","")))&
+  theme(plot.title = element_text(face = "bold"),plot.tag = element_text(face = "bold"))
+
+leg_types <- get_legend(final_types) %>% as.ggplot()
+leg_hosts <- get_legend(final_hosts) %>% as.ggplot()
+leg_PA <- get_legend(final_PA) %>% as.ggplot()
+
+leg_types+leg_hosts+leg_PA
+ggsave("03.figureUP/S_adultAbx_legend.pdf",width = 6,height = 9)
+
+
+
+# --- Pathogen composition and ARG analysis ---
+plot_Gene_funciton_PA(prefix = "ARG",Bac_profile = Bac_S_re,n1 = 10,Gene_profile = ARG_S_ab,n2 = 5,group_plot = p2_adultAbx,group = Group_adultAbx,xlab1="Pathogens abundance",ylab1="Relativate abundance",xlab2="",ylab2="Pathogens top5 host ",title="ARG_adultAbx",levels_group=c("Day0","Day8"))
+
+```
+
+# Output - Merge Main Figures
+```{r}
+{
+  design_main2 <- c(" AACD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      BBCD
+                      EEEE
+                      EEEE
+                      EEEE
+                      EEEE
+                      EEEE
+                      EEEE
+                      EEEE
+                      EEEE
+                      EEEE
+                      FFHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      GGHI
+                      JJJJ
+                      JJJJ
+                      JJJJ
+                      JJJJ
+                      JJJJ
+                      JJJJ
+                      JJJJ
+                      JJJJ
+                      JJJJ
+                      KKMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      LLMN
+                      OOOO
+                      OOOO
+                      OOOO
+                      OOOO
+                      OOOO
+                      OOOO
+                      OOOO
+                      OOOO
+                      OOOO
+                ")
+}
+
+
+library(ggplotify)
+leg1 <- get_legend(ARG_urine_main) %>% as.ggplot()
+leg2 <- get_legend(ARG_babyAbx_main) %>% as.ggplot()
+leg3 <- get_legend(ARG_adultAbx_main) %>% as.ggplot()
+# ggsave("03.fig/fig5/legend.pdf",width = 24,height = 2)
+
+final1 <- p2_urine+ARG_urine_main1+ ARG_copmare_urine_compare +ARG_urine_main2+leg1+
+          p2_babyAbx+ARG_babyAbx_main1+ ARG_copmare_babyAbx_compare +ARG_babyAbx_main2+leg2+
+          p2_adultAbx+ARG_adultAbx_main1+ ARG_copmare_adultAbx_compare +ARG_adultAbx_main2+leg3+
+    plot_layout(design = design_main2)+  plot_layout(guides = "collect") &
+    theme(legend.position='none')
+ggsave("03.figureUP/M6_ARG_main_final.pdf",width = 10,height = 7.6)
+
+
+
+```
+
+# Output - Merge Supplementary Figures
+```{r}
+
+
+# ARG_copmare_urine_compare+MGE_copmare_urine_compare+MRG_copmare_urine_compare+VF_copmare_urine_compare+
+# ARG_copmare_babyAbx_compare+MGE_copmare_babyAbx_compare+MRG_copmare_babyAbx_compare+VF_copmare_babyAbx_compare+
+# ARG_copmare_adultAbx_compare+MGE_copmare_adultAbx_compare+MRG_copmare_adultAbx_compare+VF_copmare_adultAbx_compare+
+MGE_copmare_urine_compare+MRG_copmare_urine_compare+VF_copmare_urine_compare+SG_copmare_urine_compare+
+MGE_copmare_babyAbx_compare+MRG_copmare_babyAbx_compare+VF_copmare_babyAbx_compare+SG_copmare_babyAbx_compare+
+MGE_copmare_adultAbx_compare+MRG_copmare_adultAbx_compare+VF_copmare_adultAbx_compare+SG_copmare_babyAbx_compare+
+  plot_layout(guides = 'collect',nrow = 3)+
+  plot_annotation(tag_levels = "a")&
+  theme(plot.title = element_text(face = "bold"),plot.tag = element_text(face = "bold"))&
+  theme(legend.position='bottom')&
+  theme(axis.title.x = element_blank())
+ggsave("03.figureUP/S14_final_test.pdf",width = 9,height = 6)
+
+
+
+```
+
+
+
+# Analysis - Statistical Analysis
+```{r}
+
+attach(ARG_hosts_urine_top)
+attach(ARG_hosts_adultAbx_top)
+attach(ARG_hosts_babyAbx_top)
+
+Group_urine <- as.data.frame(Group_urine)
+shared_genus <- intersect(ARG_hosts_urine_top$ID,ARG_hosts_adultAbx_top$ID) %>% intersect(.,ARG_hosts_babyAbx_top$ID)
+shared_genus <- shared_genus[shared_genus!="Others"]
+intersect(ARG_types_urine_top$ID,ARG_types_adultAbx_top$ID) %>% intersect(.,ARG_types_babyAbx_top$ID)
+
+head(ARG_types_urine_top,4)[,1]
+head(ARG_types_adultAbx_top,4)[,1]
+head(ARG_types_babyAbx_top,4)[,1]
+
+
+Bac_S_ab <- fread("01.rawdata/BP2_HumanUrine/Kraken2/TaxAbu.table.S",header = T,sep = "\t",quote = "",check.names = F) %>% select(ID,all_of(Group_urine$ID)) 
+Bac_S_re <- Bac_S_ab %>% sweep_zyz(.,format =2 )
+Bac_G_ab <- fread("01.rawdata/BP2_HumanUrine/Kraken2/TaxAbu.table.G",header = T,sep = "\t",quote = "",check.names = F) %>% select(ID,all_of(Group_urine$ID))
+Bac_G_re <- Bac_G_ab %>% sweep_zyz(.,format =2 )
+
+df_col <- PA_comb_top(pathogen = NewPA_Air$Species,abundance = Bac_S_re,n = 10) %>% profile2df_dir(prefix = "Urine",profile = .,group = Group_urine)
+df_col_se <- Rmisc::summarySE(df_col, groupvars=c("Group","variable"), measurevar=c("value"))
+df_col_se_sel <- df_col_se[which(df_col_se$variable=="Escherichia coli"),]
+df_col_se_sel[which(df_col_se_sel$Group=="Infected"),"value"]/df_col_se_sel[which(df_col_se_sel$Group=="Healthy"),"value"]
+
+# Load abundance data and compute relative abundance
+Bac_S_ab <- fread("01.rawdata/BP2_HumanBabyAbx/Kraken2/TaxAbu.table.S",header = T,sep = "\t",quote = "",check.names = F) %>% select(ID,all_of(Group_babyAbx$ID)) 
+Bac_S_re <- Bac_S_ab %>% sweep_zyz(.,format =2 )
+Bac_G_ab <- fread("01.rawdata/BP2_HumanBabyAbx/Kraken2/TaxAbu.table.G",header = T,sep = "\t",quote = "",check.names = F) %>% select(ID,all_of(Group_babyAbx$ID))
+Bac_G_re <- Bac_G_ab %>% sweep_zyz(.,format =2 )
+df_col <- PA_comb_top(pathogen = NewPA_Air$Species,abundance = Bac_S_re,n = 10) %>% profile2df_dir(prefix = "Urine",profile = .,group =  as.data.frame(Group_babyAbx))
+df_col_se <- Rmisc::summarySE(df_col, groupvars=c("Group","variable"), measurevar=c("value"))
+df_col_se_sel <- df_col_se[which(df_col_se$variable=="Escherichia coli"),]
+df_col_se_sel[which(df_col_se_sel$Group=="Hospitalization"),"value"]/df_col_se_sel[which(df_col_se_sel$Group=="Healthy"),"value"]
+
+
+# Load abundance data and compute relative abundance
+Bac_S_ab <- fread("01.rawdata/BP2_HumanAdultAbx/Kraken2/TaxAbu.table.S",header = T,sep = "\t",quote = "",check.names = F) %>% select(ID,all_of(Group_adultAbx$ID))
+Bac_S_re <- Bac_S_ab %>% sweep_zyz(.,format =2 )
+Bac_G_ab <- fread("01.rawdata/BP2_HumanAdultAbx/Kraken2/TaxAbu.table.G",header = T,sep = "\t",quote = "",check.names = F) %>% select(ID,all_of(Group_adultAbx$ID))
+Bac_G_re <- Bac_G_ab %>% sweep_zyz(.,format =2 )
+df_col <- PA_comb_top(pathogen = NewPA_Air$Species,abundance = Bac_S_re,n = 10) %>% profile2df_dir(prefix = "Urine",profile = .,group =  as.data.frame(Group_adultAbx))
+df_col_se <- Rmisc::summarySE(df_col, groupvars=c("Group","variable"), measurevar=c("value"))
+df_col_se_sel <- df_col_se[which(df_col_se$variable=="Escherichia coli"),]
+df_col_se_sel[which(df_col_se_sel$Group=="Day8"),"value"]/df_col_se_sel[which(df_col_se_sel$Group=="Day0"),"value"]
+
+
+temp <- df_col_se %>% filter(variable!="Rare/None-Pathogens") %>% Rmisc::summarySE(., groupvars=c("Group"), measurevar=c("value"))
+temp$value[2]/temp$value[1]
+
+
+# Antibiotic overall type proportion
+attach(ARG_hosts_adultAbx_col)
+df_col_se <- Rmisc::summarySE(ARG_hosts_adultAbx_col, groupvars=c("Group","variable"), measurevar=c("value"))
+df_col_se1 <-df_col_se[which(df_col_se$variable %in% shared_genus),]
+df_col_se2 <-df_col_se[which(!df_col_se$variable %in% shared_genus),]
+
+
+
+
+attach(Pangenome_taxref)
+ARG_ppm_source_ab <- fread("01.rawdata/BP2_HumanAdultAbx/results/Tax.ARGs.ppm.txt",header = T,fill = T,check.names = F,sep = "\t")  %>% as.data.frame()  %>% .[,-c(1:3)] 
+colnames(ARG_ppm_source_ab)[1] <- "ID"
+ARG_ppm_source_ab <- ARG_ppm_source_ab  %>% select(ID,all_of(order_adultAbx))
+ARG_ppm_source_ab <- aggregate(x = ARG_ppm_source_ab[,-1],by = list(ARG_ppm_source_ab$ID),FUN = sum)
+colnames(ARG_ppm_source_ab)[1] <- "ID"
+taxnonmy_pan(prefix = "ARG_ppm_source",df = ARG_ppm_source_ab,order = order_adultAbx,levels = c("P","G","S"))
+
+
+df_col <- PA_comb_top(pathogen = NewPA_Air$Species,abundance = ARG_S_ab,n = 10) %>% profile2df_dir(prefix = "dultAb",profile = .,group = Group_adultAbx)
+df_col_se <- Rmisc::summarySE(df_col, groupvars=c("Group","variable"), measurevar=c("value"))
+df_col_se_sel <- df_col_se[which(df_col_se$variable=="Escherichia coli"),]
+  
+```
+
+# Output - Data Export
+```{r}
+
+attach(Group_adultAbx)
+attach(Group_babyAbx)
+attach(Group_urine)
+
+df1 <- Group_urine %>% dplyr::select(ID,Sample,Group) ;df1$Kind <- "urine"
+df3 <- Group_adultAbx %>% dplyr::select(ID,Sample,Group) ;df3$Kind <- "adultAbx"
+df2 <- Group_babyAbx %>% dplyr::select(ID,Sample,Group) ;df2$Kind <- "babyAbx"
+Group_clinc <- rbind(df1,df2,df3)
+write.table(Group_clinc,file = "02.datasave/Group_clinc.txt",quote = F,row.names = F,sep = "\t")
+save(Group_clinc,file = "04.table/06.Clinical.Rdata")
+
+```
+、
